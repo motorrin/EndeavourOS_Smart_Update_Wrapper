@@ -36,7 +36,6 @@ CRITICAL_PKGS=(
     "systemd" "systemd-libs" "systemd-sysvcompat"
     "systemd-resolvconf"
     "lib32-systemd"
-    "systemd-boot" "systemd-ukify"
 
     # --- Core System & Base ---
     "base" "base-devel" "filesystem"
@@ -57,8 +56,7 @@ CRITICAL_PKGS=(
     "eos-sddm-theme"
 
     # --- Bootloaders ---
-    "grub" "efibootmgr" "os-prober"
-    "mkinitcpio" "dracut"
+    "grub" "efibootmgr" "os-prober" "dracut"
 
     # --- Graphics Stack (AMD iGPU + Core) ---
     "mesa" "lib32-mesa" "vulkan-icd-loader" "lib32-vulkan-icd-loader"
