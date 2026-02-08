@@ -259,7 +259,7 @@ echo -e "\n"
 # Width calculations
 w_age=6
 w_stat=8
-w_type=5
+w_type=6
 w_name=$(( max_name ))
 w_old=$(( max_old ))
 w_new=$(( max_new ))
