@@ -495,8 +495,7 @@ echo -e "  ${gray}Total Download Size: ${white}${bold}${total_download_size}${re
 
 # --- 7. Update Request ---
 
-# Check for packages that require a reboot.
-# Expanded regex: matches kernels, nvidia, systemd, microcode, cryptsetup, glibc, firmware
+# Check for packages that require a reboot
 if awk -F'\t' '$5 ~ /^(linux.*|nvidia.*|systemd.*|.*-ucode|cryptsetup|glibc|linux-firmware)$/' "$OUTPUT_FILE" | grep -q .; then
     echo -e "  ${red}${bold}⚠  Kernel/Core update detected. Reboot will be required!${reset}"
 fi
@@ -528,17 +527,50 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
 
     # 1. Running a major system update
     $CORE_CMD
-
     # Saving the return code
-    if [[ $? -eq 0 ]]; then
-        # 2. Launching Topgrade (if installed)
-        if [[ -n "$EXTRA_CMD" ]]; then
-            echo -e "\n${blue}${bold}  󰚰  System update complete. Running Topgrade for extras...${reset}\n"
-            $EXTRA_CMD
+    core_exit=$?
+
+    # Checking if there are any updates left in the system
+    pending_updates=$(LC_ALL=C pacman -Qu 2>/dev/null)
+
+    # Topgrade Launch Decision Logic
+    run_extra=false
+
+    # SCENARIO A: The system is clean
+    if [[ -z "$pending_updates" ]]; then
+        if [[ $core_exit -eq 0 ]]; then
+            echo -e "\n${green}✔ Core updates applied successfully.${reset}"
+            run_extra=true
+        else
+            # Сode error, no updates
+            echo -e "\n${green}✔ No core updates pending.${reset}"
+            run_extra=true
         fi
+
+    # SCENARIO B: Updates are stuck
     else
-        echo -e "\n${red}  ✘ Core update failed or cancelled. Skipping Topgrade.${reset}\n"
+        echo -e "\n${yellow}⚠  Core updates were NOT fully applied (Cancelled or Failed).${reset}"
+
+        # If Topgrade is installed, ask whether to launch it
+        if [[ -n "$EXTRA_CMD" ]]; then
+            echo -ne "  ${white}Run ${EXTRA_CMD} anyway? (Flatpaks/AUR etc) [y/N]: ${reset}"
+            read -r force_extra
+            if [[ "$force_extra" =~ ^[Yy]$ ]]; then
+                run_extra=true
+            else
+                echo -e "  ${dim}Skipping extra updates.${reset}\n"
+            fi
+        fi
     fi
+
+    # 2. Launching Topgrade
+    if [[ "$run_extra" == true && -n "$EXTRA_CMD" ]]; then
+        echo -e "\n${blue}${bold}  󰚰  Running Topgrade...${reset}\n"
+        $EXTRA_CMD
+    elif [[ -n "$pending_updates" ]]; then
+        echo -e "\n${red}  ✘ System partially updated or update cancelled.${reset}\n"
+    fi
+
 else
     echo -e "  ${yellow}Operation cancelled.${reset}\n"
 fi
