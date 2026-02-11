@@ -1,0 +1,341 @@
+# Since I don't use English localization, some text was manually translated.
+
+[motorrin@motorrin ~]$ up
+[20:16:56] Requesting Sudo access...
+[sudo] password for motorrin:
+
+  󰚰  Checking for updates...
+[20:16:59] Starting Arch News check (Python XML)...
+  ✔ No fresh Arch News (last: 1270h ago).
+
+[20:16:59] Symlinking local DB...
+[20:16:59] Syncing temporary database (pacman -Sy)...
+:: Updating package databases...
+ endeavouros downloading...
+ core downloading...
+ extra downloading...
+ multilib downloading...
+error: failed to get file 'core.db' from de.arch.mirror.kescher.at : Resolving timed out after 10001 milliseconds
+error: Failed to get file 'extra.db' from de.arch.mirror.kescher.at : Resolving timed out after 10001 milliseconds
+error: failed to get file 'multilib.db' from de.arch.mirror.kescher.at : Resolving timed out after 10001 milliseconds
+warning: too many errors from de.arch.mirror.kescher.at, skipping for the remainder of this transaction
+
+⚠  Mirror instability detected (timeouts or errors).
+  Refresh mirrors (Germany/Netherlands, HTTPS, Rate)? [Y/n]: y
+  Running reflector (WARNINGS ARE EXPECTED)
+[2026-02-11 20:18:54] WARNING: failed to rate http(s) download (https://ftp.spline.inf.fu-berlin.de/mirrors/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:01] WARNING: failed to rate http(s) download (https://ftp.halifax.rwth-aachen.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:07] WARNING: failed to rate http(s) download (https://mirror.ams1.nl.leaseweb.net/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:12] WARNING: failed to rate http(s) download (https://mirror.fra10.de.leaseweb.net/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:18] WARNING: failed to rate http(s) download (https://mirrors.n-ix.net/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:23] WARNING: failed to rate http(s) download (https://mirror.netcologne.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:28] WARNING: failed to rate http(s) download (https://ftp.fau.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:34] WARNING: failed to rate http(s) download (https://mirror.23m.com/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:39] WARNING: failed to rate http(s) download (https://mirror.metalgamer.eu/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:46] WARNING: failed to rate http(s) download (https://mirror.pseudoform.org/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:51] WARNING: failed to rate http(s) download (https://arch.jensgutermuth.de/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:19:56] WARNING: failed to rate http(s) download (https://mirror.ubrco.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:01] WARNING: failed to rate http(s) download (https://archlinux.thaller.ws/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:11] WARNING: failed to rate http(s) download (https://nl.mirrors.cicku.me/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:16] WARNING: failed to rate http(s) download (https://mirror.bethselamin.de/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:21] WARNING: failed to rate http(s) download (https://archlinux.mirror.wearetriple.com/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:26] WARNING: failed to rate http(s) download (https://mirror.koddos.net/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:32] WARNING: failed to rate http(s) download (https://packages.oth-regensburg.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:38] WARNING: failed to rate http(s) download (https://arch.mirrors.lavatech.top/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:43] WARNING: failed to rate http(s) download (https://arch.unixpeople.org/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:48] WARNING: failed to rate http(s) download (https://mirror.wtnet.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:20:55] WARNING: failed to rate http(s) download (https://archlinux.mirror.liteserver.nl/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:00] WARNING: failed to rate http(s) download (https://mirror.kumi.systems/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:06] WARNING: failed to rate http(s) download (https://arch.phinau.de/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:11] WARNING: failed to rate http(s) download (https://mirror.lyrahosting.com/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:17] WARNING: failed to rate http(s) download (https://mirror.dogado.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:23] WARNING: failed to rate http(s) download (https://mirror.clientvps.com/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:28] WARNING: failed to rate http(s) download (https://ftp.agdsn.de/pub/mirrors/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:34] WARNING: failed to rate http(s) download (https://mirror.cj2.nl/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:40] WARNING: failed to rate http(s) download (https://mirror.moson.org/arch/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:45] WARNING: failed to rate http(s) download (https://mirror.pagenotfound.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:52] WARNING: failed to rate http(s) download (https://nl.mirror.flokinet.net/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:21:58] WARNING: failed to rate http(s) download (https://os.codefionn.eu/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:03] WARNING: failed to rate http(s) download (https://mirrors.janbruckner.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:08] WARNING: failed to rate http(s) download (https://mirror.informatik.tu-freiberg.de/arch/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:14] WARNING: failed to rate http(s) download (https://berlin.mirror.pkgbuild.com/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:19] WARNING: failed to rate http(s) download (https://frankfurt.mirror.pkgbuild.com/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:24] WARNING: failed to rate http(s) download (https://mirror.cmt.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:30] WARNING: failed to rate http(s) download (https://mirror.sunred.org/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:35] WARNING: failed to rate http(s) download (https://mirror.lcarilla.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:40] WARNING: failed to rate http(s) download (https://archlinux.richard-neumann.de/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:46] WARNING: failed to rate http(s) download (https://mirror.hugo-betrugo.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:51] WARNING: failed to rate http(s) download (https://ams.nl.mirrors.bjg.at/arch/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:22:57] WARNING: failed to rate http(s) download (https://de.arch.niranjan.co/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:02] WARNING: failed to rate http(s) download (https://nl.arch.niranjan.co/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:07] WARNING: failed to rate http(s) download (https://files.hadiko.de/pub/dists/arch/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:14] WARNING: failed to rate http(s) download (https://mirror.as20647.net/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:19] WARNING: failed to rate http(s) download (https://mirror.ipb.de/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:24] WARNING: failed to rate http(s) download (https://mirrors.aminvakil.com/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:30] WARNING: failed to rate http(s) download (https://mirrors.purring.online/arch/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:35] WARNING: failed to rate http(s) download (https://arch.owochle.app/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:41] WARNING: failed to rate http(s) download (https://mirror.thereisno.page/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:47] WARNING: failed to rate http(s) download (https://mirror-de-1.cutie.dating/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:52] WARNING: failed to rate http(s) download (https://de.mirror.shibe.party/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:23:58] WARNING: failed to rate http(s) download (https://mirror.nyaa.vc/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+[2026-02-11 20:24:03] WARNING: failed to rate http(s) download (https://mirror.diyarciftci.xyz/archlinux/extra/os/x86_64/extra.db): Download timed out after 5 second(s).
+  ✔ Mirrors updated successfully.
+
+[20:24:04] Retrying sync...
+[20:24:04] Syncing temporary database (pacman -Sy)...
+[sudo] password for motorrin:
+:: Updating package databases...
+ endeavouros downloading...
+ core downloading...
+ extra downloading...
+ multilib downloading...
+[20:24:19] Calculating update list (pacman -Qu)...
+[20:24:19] Found 19 updates. Starting detailed analysis...
+  󰑮  Analyzing updates: 19 packages
+[20:24:19] Fetching remote metadata (pacman -Si)...
+[20:24:19] Fetching local metadata (pacman -Qi)...
+[20:24:19] Processing data and calculating diffs...
+  Analysis: [====================>] 100%
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ AGE    STATUS  REPO   TYPE       PACKAGE                   OLD                           NEW                SIZE      NEW DATE   DESCRIPTION
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+[45h]    CORE   extra Patch  nvidia-open                       590.48.01-10 → 590.48.01-12                8.46 MiB   09 Feb 22:55 NVIDIA open kernel modules
+[45h]    CORE   extra Patch  nvidia-open-lts                 1:590.48.01-10 → 1:590.48.01-11              8.46 MiB   09 Feb 22:56 NVIDIA open kernel modules
+[45h]    CORE   extra Patch  nvidia-utils                       590.48.01-2 → 590.48.01-4                 277.94 MiB 09 Feb 22:52 NVIDIA drivers utilities
+[47h]    CORE   core  Patch  linux-lts                            6.12.69-1 → 6.12.69-2                   138.16 MiB 09 Feb 20:34 The LTS Linux kernel and modules
+[47h]    CORE   core  Patch  linux-lts-headers                    6.12.69-1 → 6.12.69-2                   26.81 MiB  09 Feb 20:34 Headers and scripts for building modules for the LTS Linu…
+[48h]    CORE   core  Patch  linux                           6.18.8.arch2-1 → 6.18.9.arch1-2              143.05 MiB 09 Feb 20:16 The Linux kernel and modules
+[48h]    CORE   core  Patch  linux-headers                   6.18.8.arch2-1 → 6.18.9.arch1-2              56.97 MiB  09 Feb 20:16 Headers and scripts for building modules for the Linux ke…
+[51h]    CORE   core  Patch  gcc-libs           15.2.1+r447+g6a64f6c3ebb8-1 → 15.2.1+r604+g0b99615a8aef-1 2.56 KiB   09 Feb 16:52 Runtime libraries shipped by GCC
+[51h]    CORE   core  Patch  lib32-gcc-libs     15.2.1+r447+g6a64f6c3ebb8-1 → 15.2.1+r604+g0b99615a8aef-1 10.71 MiB  09 Feb 16:52 32-bit runtime libraries shipped by GCC
+[53h]    CORE   core  MINOR  glibc                 2.42+r51+gcbf39c26b258-2 → 2.43+r5+g856c426a7534-1     10.13 MiB  09 Feb 14:31 GNU C Library
+[53h]    CORE   core  MINOR  lib32-glibc           2.42+r51+gcbf39c26b258-2 → 2.43+r5+g856c426a7534-1     3.53 MiB   09 Feb 14:31 GNU C Library (32-bit)
+[14h]           extra MINOR  libuv                                 1.51.0-1 → 1.52.0-1                    261.27 KiB 11 Feb 05:26 Multi-platform support library with a focus on asynchrono…
+[16h]           extra Patch  glycin                                 2.0.7-1 → 2.0.8-1                     3.76 MiB   11 Feb 03:36 Sandboxed and extendable image decoding
+[17h]           extra Patch  libjxl                                0.11.1-5 → 0.11.2-1                    2.17 MiB   11 Feb 03:14 JPEG XL image format reference implementation
+[48h]           extra Patch  libsysprof-capture                      49.0-1 → 49.0-2                      48.72 KiB  09 Feb 19:56 Kernel based performance profiler - capture library
+[48h]           core  Patch  libtool                                2.6.0-3 → 2.6.0-4                     426.78 KiB 09 Feb 19:38 A generic library support script
+[51h]           core  MINOR  binutils            2.45.1+r35+g12d0a1dbc1b9-1 → 2.46-1                      7.93 MiB   09 Feb 16:27 A set of programs to assemble and manipulate binary and o…
+[51h]           core  Patch  gcc                15.2.1+r447+g6a64f6c3ebb8-1 → 15.2.1+r604+g0b99615a8aef-1 54.04 MiB  09 Feb 16:52 The GNU Compiler Collection - C and C++ frontends
+[186h]          extra Patch  talloc                                 2.4.3-2 → 2.4.4-1                     48.62 KiB  04 Feb 01:38 Hierarchical pool based memory allocator with destructors
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Total Download Size: 752.89 MiB
+  ⚠  Kernel/Core/DE update detected. Reboot will be required!
+
+  Apply updates? (eos-update && topgrade) [Y/n]: y
+
+
+Info: some translations will fall back to English, see file '/tmp/translations-xozUZ.errlog'.
+eos-update: package updater with additional features
+Updating native apps...
+:: Updating package databases...
+ endeavouros                                                                           13,5 KiB  26,9 KiB/s 00:01 [--------------------------------------------------------------------] 100%
+ core                                                                                 122,5 KiB   214 KiB/s 00:01 [--------------------------------------------------------------------] 100%
+ extra                                                                                  7,8 MiB  5,48 MiB/s 00:01 [--------------------------------------------------------------------] 100%
+ multilib is up to date
+:: Starting a full system update...
+dependency resolution...
+conflict checking...
+
+Package (30)                Old version                New version                        Size change    Download size
+
+core/binutils             2.45.1+r35+g12d0a1dbc1b9-1   2.46-1                                0,64 MiB         7,93 MiB
+core/gcc                  15.2.1+r447+g6a64f6c3ebb8-1  15.2.1+r604+g0b99615a8aef-1           0,13 MiB        54,04 MiB
+core/gcc-libs             15.2.1+r447+g6a64f6c3ebb8-1  15.2.1+r604+g0b99615a8aef-1        -152,20 MiB         0,00 MiB
+core/glibc                2.42+r51+gcbf39c26b258-2     2.43+r5+g856c426a7534-1               0,48 MiB        10,13 MiB
+extra/glycin              2.0.7-1                      2.0.8-1                              -0,64 MiB         3,76 MiB
+core/lib32-gcc-libs       15.2.1+r447+g6a64f6c3ebb8-1  15.2.1+r604+g0b99615a8aef-1         -72,75 MiB        10,71 MiB
+core/lib32-glibc          2.42+r51+gcbf39c26b258-2     2.43+r5+g856c426a7534-1               0,26 MiB         3,53 MiB
+core/libasan                                           15.2.1+r604+g0b99615a8aef-1           1,79 MiB         0,48 MiB
+core/libatomic                                         15.2.1+r604+g0b99615a8aef-1           0,04 MiB         0,01 MiB
+core/libgcc                                            15.2.1+r604+g0b99615a8aef-1           0,17 MiB         0,08 MiB
+core/libgfortran                                       15.2.1+r604+g0b99615a8aef-1           3,46 MiB         0,89 MiB
+core/libgomp                                           15.2.1+r604+g0b99615a8aef-1           0,40 MiB         0,21 MiB
+extra/libjxl              0.11.1-5                     0.11.2-1                             -0,06 MiB         2,17 MiB
+core/liblsan                                           15.2.1+r604+g0b99615a8aef-1           0,53 MiB         0,21 MiB
+core/libobjc                                           15.2.1+r604+g0b99615a8aef-1           0,09 MiB         0,04 MiB
+core/libquadmath                                       15.2.1+r604+g0b99615a8aef-1           0,30 MiB         0,16 MiB
+core/libstdc++                                         15.2.1+r604+g0b99615a8aef-1           2,57 MiB         0,75 MiB
+extra/libsysprof-capture  49.0-1                       49.0-2                                0,00 MiB         0,05 MiB
+core/libtool              2.6.0-3                      2.6.0-4                               0,00 MiB         0,42 MiB
+core/libtsan                                           15.2.1+r604+g0b99615a8aef-1           1,41 MiB         0,43 MiB
+core/libubsan                                          15.2.1+r604+g0b99615a8aef-1           0,48 MiB         0,19 MiB
+extra/libuv               1.51.0-1                     1.52.0-1                              0,01 MiB         0,26 MiB
+core/linux                6.18.8.arch2-1               6.18.9.arch1-2                        0,17 MiB       143,05 MiB
+core/linux-headers        6.18.8.arch2-1               6.18.9.arch1-2                        0,00 MiB        56,97 MiB
+core/linux-lts            6.12.69-1                    6.12.69-2                             0,14 MiB       138,16 MiB
+core/linux-lts-headers    6.12.69-1                    6.12.69-2                             0,00 MiB        26,81 MiB
+extra/nvidia-open         590.48.01-10                 590.48.01-12                          0,00 MiB         8,46 MiB
+extra/nvidia-open-lts     1:590.48.01-10               1:590.48.01-11                        0,00 MiB         8,46 MiB
+extra/nvidia-utils        590.48.01-2                  590.48.01-4                           0,00 MiB       277,94 MiB
+extra/talloc              2.4.3-2                      2.4.4-1                               0,00 MiB         0,05 MiB
+
+Will be downloaded:     756,34 MiB
+Will be installed:  1959,91 MiB
+Size change:  -212,58 MiB
+
+:: Proceed with installation? [Y/n] y
+:: Receiving packages...
+ gcc-15.2.1+r604+g0b99615a8aef-1-x86_64                                                54,0 MiB  3,44 MiB/s 00:16 [--------------------------------------------------------------------] 100%
+ linux-headers-6.18.9.arch1-2-x86_64                                                   57,0 MiB  2,56 MiB/s 00:22 [--------------------------------------------------------------------] 100%
+ linux-lts-headers-6.12.69-2-x86_64                                                    26,8 MiB  3,86 MiB/s 00:07 [--------------------------------------------------------------------] 100%
+ lib32-gcc-libs-15.2.1+r604+g0b99615a8aef-1-x86_64                                     10,7 MiB  3,82 MiB/s 00:03 [--------------------------------------------------------------------] 100%
+ glibc-2.43+r5+g856c426a7534-1-x86_64                                                  10,1 MiB  2,85 MiB/s 00:04 [--------------------------------------------------------------------] 100%
+ linux-6.18.9.arch1-2-x86_64                                                          143,1 MiB  5,11 MiB/s 00:28 [--------------------------------------------------------------------] 100%
+ nvidia-open-590.48.01-12-x86_64                                                        8,5 MiB  3,17 MiB/s 00:03 [--------------------------------------------------------------------] 100%
+ nvidia-open-lts-1:590.48.01-11-x86_64                                                  8,5 MiB  4,20 MiB/s 00:02 [--------------------------------------------------------------------] 100%
+ binutils-2.46-1-x86_64                                                                 7,9 MiB  2,64 MiB/s 00:03 [--------------------------------------------------------------------] 100%
+ glycin-2.0.8-1-x86_64                                                                  3,8 MiB  1626 KiB/s 00:02 [--------------------------------------------------------------------] 100%
+ lib32-glibc-2.43+r5+g856c426a7534-1-x86_64                                             3,5 MiB  2,51 MiB/s 00:01 [--------------------------------------------------------------------] 100%
+ libjxl-0.11.2-1-x86_64                                                                 2,2 MiB  4,07 MiB/s 00:01 [--------------------------------------------------------------------] 100%
+ libgfortran-15.2.1+r604+g0b99615a8aef-1-x86_64                                       915,4 KiB  1664 KiB/s 00:01 [--------------------------------------------------------------------] 100%
+ libstdc++-15.2.1+r604+g0b99615a8aef-1-x86_64                                         765,8 KiB  1868 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libasan-15.2.1+r604+g0b99615a8aef-1-x86_64                                           489,1 KiB  1686 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ linux-lts-6.12.69-2-x86_64                                                           138,2 MiB  4,11 MiB/s 00:34 [--------------------------------------------------------------------] 100%
+ libtsan-15.2.1+r604+g0b99615a8aef-1-x86_64                                           444,2 KiB  2,33 MiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libtool-2.6.0-4-x86_64                                                               426,8 KiB  2,16 MiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libuv-1.52.0-1-x86_64                                                                261,3 KiB  1262 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ liblsan-15.2.1+r604+g0b99615a8aef-1-x86_64                                           218,4 KiB   840 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libgomp-15.2.1+r604+g0b99615a8aef-1-x86_64                                           218,1 KiB  1054 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libubsan-15.2.1+r604+g0b99615a8aef-1-x86_64                                          198,2 KiB   991 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libquadmath-15.2.1+r604+g0b99615a8aef-1-x86_64                                       164,0 KiB  1093 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libgcc-15.2.1+r604+g0b99615a8aef-1-x86_64                                             77,8 KiB   397 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libsysprof-capture-49.0-2-x86_64                                                      48,7 KiB   518 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ talloc-2.4.4-1-x86_64                                                                 48,6 KiB   279 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libatomic-15.2.1+r604+g0b99615a8aef-1-x86_64                                          13,2 KiB   113 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ libobjc-15.2.1+r604+g0b99615a8aef-1-x86_64                                            36,9 KiB   184 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ gcc-libs-15.2.1+r604+g0b99615a8aef-1-x86_64                                            2,6 KiB  33,3 KiB/s 00:00 [--------------------------------------------------------------------] 100%
+ nvidia-utils-590.48.01-4-x86_64                                                      277,9 MiB  7,19 MiB/s 00:39 [--------------------------------------------------------------------] 100%
+ Total (30/30)                                                                        756,3 MiB  19,5 MiB/s 00:39 [--------------------------------------------------------------------] 100%
+(30/30) checking keys                                                                                             [--------------------------------------------------------------------] 100%
+(30/30) package integrity check                                                                                   [--------------------------------------------------------------------] 100%
+(30/30) loading package files                                                                                     [--------------------------------------------------------------------] 100%
+(30/30) checking file conflicts                                                                                   [--------------------------------------------------------------------] 100%
+:: Launching pre-transaction hooks...
+(1/4) Performing snapper pre snapshots for the following configurations...
+==> root: 21
+(2/4) Removing initramfs...
+(3/4) Remove DKMS modules
+==> dkms remove --no-depmod openrazer-driver/3.11.0 -k 6.12.69-1-lts
+==> dkms remove --no-depmod openrazer-driver/3.11.0 -k 6.18.8-arch2-1
+==> depmod 6.12.69-1-lts
+==> depmod 6.18.8-arch2-1
+(4/4) Removing old entries from the info directory file...
+:: Processing package changes...
+( 1/30) updating glibc                                                                                            [--------------------------------------------------------------------] 100%
+warning: '/etc/locale.gen' is installed as '/etc/locale.gen.pacnew'
+Generating locales...
+  en_US.UTF-8... done
+  ru_RU.UTF-8... done
+Generation complete.
+( 2/30) installing libasan                                                                                        [--------------------------------------------------------------------] 100%
+( 3/30) installing libatomic                                                                                      [--------------------------------------------------------------------] 100%
+( 4/30) installing libgfortran                                                                                    [--------------------------------------------------------------------] 100%
+( 5/30) installing libgcc                                                                                         [--------------------------------------------------------------------] 100%
+( 6/30) installing libgomp                                                                                        [--------------------------------------------------------------------] 100%
+( 7/30) installing liblsan                                                                                        [--------------------------------------------------------------------] 100%
+( 8/30) installing libobjc                                                                                        [--------------------------------------------------------------------] 100%
+( 9/30) installing libquadmath                                                                                    [--------------------------------------------------------------------] 100%
+(10/30) installing libstdc++                                                                                      [--------------------------------------------------------------------] 100%
+(11/30) installing libtsan                                                                                        [--------------------------------------------------------------------] 100%
+(12/30) installing libubsan                                                                                       [--------------------------------------------------------------------] 100%
+(13/30) installing gcc-libs                                                                                       [--------------------------------------------------------------------] 100%
+(14/30) installing binutils                                                                                       [--------------------------------------------------------------------] 100%
+New additional dependencies for 'binutils'
+    perl: for gprofng-display-html [installed]
+(15/30) updating gcc                                                                                              [--------------------------------------------------------------------] 100%
+(16/30) updating libjxl                                                                                           [--------------------------------------------------------------------] 100%
+(17/30) updating libsysprof-capture                                                                               [--------------------------------------------------------------------] 100%
+(18/30) updating glycin                                                                                           [--------------------------------------------------------------------] 100%
+(19/30) updating lib32-glibc                                                                                      [--------------------------------------------------------------------] 100%
+(20/30) updating lib32-gcc-libs                                                                                   [--------------------------------------------------------------------] 100%
+(21/30) updating libtool                                                                                          [--------------------------------------------------------------------] 100%
+(22/30) updating libuv                                                                                            [--------------------------------------------------------------------] 100%
+(23/30) updating linux                                                                                            [--------------------------------------------------------------------] 100%
+(24/30) updating linux-headers                                                                                    [--------------------------------------------------------------------] 100%
+(25/30) updating linux-lts                                                                                        [--------------------------------------------------------------------] 100%
+(26/30) updating linux-lts-headers                                                                                [--------------------------------------------------------------------] 100%
+(27/30) updating nvidia-utils                                                                                     [--------------------------------------------------------------------] 100%
+(28/30) updating nvidia-open                                                                                      [--------------------------------------------------------------------] 100%
+(29/30) updating nvidia-open-lts                                                                                  [--------------------------------------------------------------------] 100%
+(30/30) updating talloc                                                                                           [--------------------------------------------------------------------] 100%
+:: Launching post-transaction hooks...
+( 1/14) Creating system user accounts...
+( 2/14) Reloading system manager configuration...
+( 3/14) Restarting marked services...
+( 4/14) Reloading device manager configuration...
+( 5/14) Arming ConditionNeedsUpdate...
+( 6/14) Updating module dependencies...
+( 7/14) Install DKMS modules
+==> dkms install --no-depmod openrazer-driver/3.11.0 -k 6.18.9-arch1-2
+==> dkms install --no-depmod openrazer-driver/3.11.0 -k 6.12.69-2-lts
+==> depmod 6.18.9-arch1-2
+==> depmod 6.12.69-2-lts
+( 8/14) Updating initramfs...
+:: Building initramfs for linux-lts (6.12.69-2-lts)
+:: Building fallback initramfs for linux-lts (6.12.69-2-lts)
+:: Building initramfs for linux (6.18.9-arch1-2)
+:: Building fallback initramfs for linux (6.18.9-arch1-2)
+( 9/14) Reloading system bus configuration...
+(10/14) eos-nvidia-fix.hook
+:: Building initramfs for linux-lts (6.12.69-2-lts)
+:: Building fallback initramfs for linux-lts (6.12.69-2-lts)
+:: Building initramfs for linux (6.18.9-arch1-2)
+:: Building fallback initramfs for linux (6.18.9-arch1-2)
+(11/14) Check if user should be informed about rebooting after certain system package upgrades.
+(12/14) Checking which packages need to be rebuilt
+(13/14) Updating the info directory file...
+(14/14) Performing snapper post snapshots for the following configurations...
+==> root: 22
+
+✔ Core updates applied successfully.
+
+  󰚰  Running Topgrade...
+
+
+── 20:27:22 - Self update ──────────────────────────────────────────────────────
+Checking target-arch... x86_64-unknown-linux-musl
+Checking current version... v16.9.0
+Checking latest released version... Topgrade is up-to-date
+
+── 20:27:23 - System update ────────────────────────────────────────────────────
+:: Updating package databases...
+ endeavouros is up to date
+ core is up to date
+ extra is up to date
+ multilib is up to date
+:: Search for updates in the AUR...
+:: Search for updates in the database...
+ nothing else to do
+
+── 20:27:25 - Configuration update ─────────────────────────────────────────────
+==> pacnew file found for /etc/locale.gen
+:: (V)iew, (M)erge, (S)kip, (R)emove pacnew, (O)verwrite with pacnew, (Q)uit: [v/m/s/r/o/q] o
+renamed '/etc/locale.gen.pacnew' -> '/etc/locale.gen'
+
+── 20:28:41 - Firmware upgrades ────────────────────────────────────────────────
+Updating lvfs
+Getting…               [************************************** ] Less than a minute left…
+Successfully downloaded new metadata:
+ • 5 devices are updatable
+ • 0 devices are supported in the enabled remotes (an update has been published)
+Devices with no available firmware updates:
+ • MSFT0002:00 04F3:31AD
+ • MZALQ256HBJD-00BL2
+ • Patriot Burst
+ • System Firmware
+ • UEFI Device Firmware
+No devices suitable for updating.
+
+── 20:28:54 - TLDR ─────────────────────────────────────────────────────────────
+Updated cache for language ru: 546 entries
+Updated cache for language en: 6896 entries
+
+── 20:29:13 - Summary ──────────────────────────────────────────────────────────
+Self Update: OK
+System update: OK
+config-update: OK
+Firmware: OK
+TLDR: OK
+[motorrin@motorrin ~]$
