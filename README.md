@@ -12,9 +12,9 @@ While the core update logic works on any Arch-based system, the **Critical Packa
 
 ---
 
-# 🛡️ Arch/EndeavourOS Smart Update Wrapper
+# 🛡️ EndeavourOS Smart Update Wrapper
 
-A robust Bash script designed to make Arch Linux updates safer and more informative. It analyzes pending updates before installation, highlights critical system components, and checks for official Arch Linux news.
+A robust Bash script designed to make EndeavourOS updates safer and more informative. It analyzes pending updates before installation, highlights critical system components, and checks for official Arch Linux news.
 
 # ✨ Key Features
 
@@ -25,9 +25,9 @@ The script performs pacman -Sy into a temporary directory instead of the system 
 
 # 2. 📰 Arch News Integration
 
-Automatically parses the archlinux.org RSS feed before listing updates.
-•  Warns you immediately if there are fresh news items (< 48h).
-•  Helps prevent breakage requiring manual intervention.
+Checks the official Arch Linux News feed before syncing databases.
+•  Alerts you to news items from the last 14 days to ensure you don't miss manual intervention notices.
+•  Acts as a safeguard against "blind" updates that could break the system.
 
 # 3. 🧠 Semantic Version Analysis
 
