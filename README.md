@@ -66,24 +66,23 @@ Smart heuristics to determine if a reboot is needed. It scans for updates to:
 
 # 🛠️ Installation & Setup
 
-# 1. Create the script file and paste the code
+1. Create the script file and paste the code
 nano ~/EOS-up
 
-# 2. Make the script executable
+2. Make the script executable
 chmod +x ~/EOS-up
 
-# 3. Make sure that your system uses bash:
+3. Make sure that your system uses bash:
 echo $0
 
-# 4. Open the bash configuration file:
+4. Open the bash configuration file:
 nano ~/.bashrc
 
-# 5. Add the following alias to the end of the file:
+5. Add the following alias to the end of the file:
 alias up="~/EOS-up"
 
-# 6. Apply the changes immediately:
+6. Apply the changes immediately:
 source ~/.bashrc
 
-# 7. Run the script using the new alias:
-
+7. Run the script using the new alias:
 up
