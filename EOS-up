@@ -517,8 +517,8 @@ echo -e "  ${gray}Total Download Size: ${white}${bold}${total_download_size}${re
 # --- 7. Update Request ---
 
 # Check for packages that require a reboot
-if awk -F'\t' '$5 ~ /^(linux.*|nvidia.*|systemd.*|.*-ucode|cryptsetup|glibc|linux-firmware)$/' "$OUTPUT_FILE" | grep -q .; then
-    echo -e "  ${red}${bold}⚠  Kernel/Core update detected. Reboot will be required!${reset}"
+if awk -F'\t' '$5 ~ /^(linux.*|nvidia.*|systemd.*|.*-ucode|cryptsetup|glibc|linux-firmware|mesa|wayland|xorg-server|dbus.*|qt[56]-base|plasma-.*|kwin|egl-wayland)$/' "$OUTPUT_FILE" | grep -q .; then
+    echo -e "  ${red}${bold}⚠  Kernel/Core/DE update detected. Reboot will be required!${reset}"
 fi
 
 # Checking commands
