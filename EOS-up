@@ -13,20 +13,19 @@ cyan='\033[38;5;79m'
 white='\033[38;5;255m'
 gray='\033[38;5;244m'
 
-# Backgrounds for statuses
 bg_crit='\033[48;5;160;38;5;255;1m' # Red background
 bg_core='\033[48;5;237;38;5;214;1m' # Dark gray background
 
 # --- 2. Critical Package Configuration ---
 CRITICAL_PKGS=(
-    # --- Kernels & Microcode (AMD CPU) ---
+    # --- Kernels & Microcode ---
     "linux" "linux-headers"
     "linux-lts" "linux-lts-headers"
     "linux-zen" "linux-zen-headers"
     "linux-hardened" "linux-hardened-headers"
     "linux-firmware" "amd-ucode"
 
-    # --- NVIDIA Drivers (Discrete GPU) ---
+    # --- NVIDIA Drivers ---
     "nvidia" "nvidia-lts" "nvidia-dkms"
     "nvidia-open" "nvidia-open-lts" "nvidia-open-dkms"
     "nvidia-utils" "nvidia-settings" "lib32-nvidia-utils"
@@ -58,23 +57,23 @@ CRITICAL_PKGS=(
     # --- Bootloaders ---
     "grub" "efibootmgr" "os-prober" "dracut"
 
-    # --- Graphics Stack (AMD iGPU + Core) ---
+    # --- Graphics Stack ---
     "mesa" "lib32-mesa" "vulkan-icd-loader" "lib32-vulkan-icd-loader"
     "xorg-server" "xorg-xwayland" "wayland" "wayland-protocols"
 
-    # AMD Drivers (iGPU)
+    # AMD Drivers
     "xf86-video-amdgpu"
     "vulkan-radeon" "lib32-vulkan-radeon"
 
-    # Hardware Video Acceleration (AMD)
+    # Hardware Video Acceleration
     "libva-mesa-driver" "lib32-libva-mesa-driver" "mesa-vdpau"
 
-    # --- KDE Plasma (Desktop Environment) ---
+    # --- KDE ---
     "plasma-desktop" "plasma-workspace" "kwin"
     "systemsettings" "sddm" "plasma-wayland-session"
     "kde-cli-tools" "powerdevil"
 
-    # Frameworks & Libraries (Qt/Wayland/Nvidia compat)
+    # Frameworks & Libraries
     "qt6-base" "qt5-base" "kwayland" "egl-wayland"
 
     # Hybrid Graphics Switcher
@@ -94,19 +93,27 @@ for pkg in "${CRITICAL_PKGS[@]}"; do CRIT_MAP["$pkg"]=1; done
 # --- 3. Temporary Files ---
 OUTPUT_FILE=$(mktemp)
 SYNC_LOG=$(mktemp)
-# Using mktemp -d safely
+
 if ! CHECK_DB=$(mktemp -d /tmp/checkupdates-db.XXXXXX); then
     echo -e "${red}Error: Could not create temp db directory.${reset}"
     exit 1
 fi
 
-# Safe cleaning
 cleanup() {
-    [[ -n "$CHECK_DB" && -d "$CHECK_DB" ]] && sudo rm -rf "$CHECK_DB"
-    [[ -f "$OUTPUT_FILE" ]] && rm -f "$OUTPUT_FILE"
-    [[ -f "$SYNC_LOG" ]] && rm -f "$SYNC_LOG"
+    if [[ -n "$CHECK_DB" && -d "$CHECK_DB" && "$CHECK_DB" == /tmp/* && "$CHECK_DB" != "/tmp/" ]]; then
+        sudo rm -rf "$CHECK_DB"
+    fi
+
+    local files_to_remove=()
+    [[ -f "$OUTPUT_FILE" ]] && files_to_remove+=("$OUTPUT_FILE")
+    [[ -f "$SYNC_LOG" ]] && files_to_remove+=("$SYNC_LOG")
+
+    if [[ ${#files_to_remove[@]} -gt 0 ]]; then
+        rm -f "${files_to_remove[@]}"
+    fi
 }
-trap cleanup EXIT
+
+trap cleanup EXIT INT TERM
 
 # --- 4. Helper Functions ---
 log_step() {
@@ -116,28 +123,23 @@ log_step() {
 get_update_type() {
     local old=$1 new=$2
 
-    # 1. Remove Epoch
     local v_old=${old#*:}
     local v_new=${new#*:}
 
-    # Check Epoch change
     if [[ "$old" == *":"* || "$new" == *":"* ]]; then
         local e_old=${old%%:*}
         local e_new=${new%%:*}
         [[ "$e_old" != "$e_new" ]] && { echo "EPOCH"; return; }
     fi
 
-    # 2. Normalize and convert to integer arrays
     local nums_old=($(echo "$v_old" | sed 's/[^0-9]/ /g'))
     local nums_new=($(echo "$v_new" | sed 's/[^0-9]/ /g'))
 
-    # 3. Iterative comparison
     local len=${#nums_new[@]}
     for (( i=0; i<len; i++ )); do
         local n_old=${nums_old[$i]}
         local n_new=${nums_new[$i]}
 
-        # If old version had fewer segments, treat as minor/patch
         [[ -z "$n_old" ]] && { echo "MINOR"; return; }
 
         if (( 10#$n_old != 10#$n_new )); then
@@ -175,7 +177,6 @@ check_arch_news() {
     log_step "Starting Arch News check (Python XML)..."
     echo -ne "${gray}  Checking Arch News... ${reset}"
 
-    # Using Python to atomically parse XML and convert dates to Timestamps
     if news_ts=$(curl -sf --connect-timeout 2 --max-time 3 https://archlinux.org/feeds/news/ | python3 -c "
 import sys
 import xml.etree.ElementTree as ET
@@ -200,18 +201,16 @@ try:
 except Exception:
     sys.exit(1)
 "); then
-        # If Python returned a timestamp (number)
         now_time=$(date +%s)
         diff_hours=$(( (now_time - news_ts) / 3600 ))
 
-        if (( diff_hours < 336 )); then # 336 hours = 14 days
+        if (( diff_hours < 336 )); then # 14 days
             echo -e "\r\033[2K${red}${bold}  ⚠ WARNING: Fresh Arch News detected ($diff_hours h ago)!${reset}"
             echo -e "  ${red}  Check https://archlinux.org/ before updating.${reset}\n"
         else
             echo -e "\r\033[2K${green}  ✔ No fresh Arch News (last: ${diff_hours}h ago).${reset}\n"
         fi
     else
-        # Fallback message
         echo -e "\r\033[2K${dim}  ? Could not check Arch News (Connection or XML error).${reset}\n"
     fi
 }
@@ -224,7 +223,6 @@ refresh_mirrors() {
     if [[ "$ans" =~ ^[Yy]$ || -z "$ans" ]]; then
         echo -e "  ${blue}Running reflector (WARNINGS ARE EXPECTED)${reset}"
         if command -v reflector &>/dev/null; then
-            # Download timeout is 5 seconds to avoid getting stuck on dead mirrors.
             if sudo reflector --country Germany,Netherlands --protocol https --sort rate --save /etc/pacman.d/mirrorlist --download-timeout 5; then
                 echo -e "  ${green}✔ Mirrors updated successfully.${reset}\n"
                 return 0
@@ -241,8 +239,6 @@ refresh_mirrors() {
 }
 
 # --- 6. Main Logic ---
-
-# 0. Refresh sudo credentials upfront to prevent password prompt from breaking the UI later
 log_step "Requesting Sudo access..."
 if ! sudo -v; then
     echo -e "${red}Error: Sudo authentication failed.${reset}"
@@ -251,25 +247,20 @@ fi
 
 echo -e "\n${blue}${bold}  󰚰  Checking for updates...${reset}"
 
-# 1. Check for pacman lock
 if [[ -f /var/lib/pacman/db.lck ]]; then
     echo -e "${red}Error: Pacman database is locked (/var/lib/pacman/db.lck).${reset}"
     echo -e "${yellow}Another package manager process is running.${reset}"
     exit 1
 fi
 
-# 2. Check Arch News
 check_arch_news
 
-# 3. Symlink the local database
 log_step "Symlinking local DB..."
 ln -s /var/lib/pacman/local "$CHECK_DB/local" > /dev/null 2>&1
 
-# 4. Fix Permissions
 sudo chown -R root:root "$CHECK_DB"
 sudo chmod 755 "$CHECK_DB"
 
-# 5. Synchronize the TEMPORARY database (With Error Detection)
 MAX_RETRIES=1
 attempt=0
 
@@ -277,7 +268,6 @@ while (( attempt <= MAX_RETRIES )); do
     log_step "Syncing temporary database (pacman -Sy)..."
 
     set -o pipefail
-    # 2>&1 redirects errors in the general stream to be caught
     if sudo pacman -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
         PACMAN_EXIT=0
     else
@@ -285,25 +275,21 @@ while (( attempt <= MAX_RETRIES )); do
     fi
     set +o pipefail
 
-    # Analyzing the log for network errors
     if grep -iqE "error|failed|timed out|could not resolve" "$SYNC_LOG"; then
         IS_DIRTY=1
     else
         IS_DIRTY=0
     fi
 
-    # Scenario 1: Everything is perfect
     if [[ $PACMAN_EXIT -eq 0 && $IS_DIRTY -eq 0 ]]; then
         break
     else
-        # Scenario 2: There are errors, try to fix them (if there are attempts)
         if (( attempt < MAX_RETRIES )); then
             if refresh_mirrors; then
                 ((attempt++))
                 log_step "Retrying sync..."
                 continue
             else
-                # If the user refused to update the mirrors
                 if [[ $PACMAN_EXIT -eq 0 ]]; then
                      echo -e "${yellow}Proceeding despite mirror warnings...${reset}"
                      break
@@ -311,18 +297,15 @@ while (( attempt <= MAX_RETRIES )); do
             fi
         fi
 
-        # Scenario 3: Attempts failed or fatal error
         if [[ $PACMAN_EXIT -ne 0 ]]; then
             echo -e "${red}Error: Could not sync databases.${reset}"
             exit 1
         else
-            # Pacman exited with code 0, but there were download errors (dirty pass)
             break
         fi
     fi
 done
 
-# 6. Get the list of updates
 log_step "Calculating update list (pacman -Qu)..."
 updates=$(LC_ALL=C pacman -Qu --dbpath "$CHECK_DB" --color never)
 
@@ -335,13 +318,10 @@ pkg_count=$(echo "$updates" | wc -l)
 log_step "Found $pkg_count updates. Starting detailed analysis..."
 echo -e "${blue}${bold}  󰑮  Analyzing updates: ${white}$pkg_count packages${reset}"
 
-# --- Optimization: Batch fetch extended info ---
 all_pkgs=$(echo "$updates" | awk '{print $1}')
 
-# 1. New Package Data (Repo | BuildDate | Size | Description)
 log_step "Fetching remote metadata (pacman -Si)..."
 declare -A NEW_DATA
-# Using the ~|~ separator. Added removal of '~' in description to prevent collisions
 while IFS='' read -r line; do
     name=${line%%~|~*}
     rest=${line#*~|~}
@@ -367,7 +347,6 @@ done < <(LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never $all_pkgs 2>/dev
     }
 ')
 
-# 2. Old Package Data (BuildDate | InstallReason)
 log_step "Fetching local metadata (pacman -Qi)..."
 declare -A OLD_DATA
 while IFS='|' read -r name bdate reason; do
@@ -379,7 +358,6 @@ done < <(LC_ALL=C pacman -Qi $all_pkgs 2>/dev/null | awk -F': ' '
     /^$/ {if (n) print n "|" b "|" r; n=""}
 ')
 
-# Calculate Total Download Size (KiB/MiB/GiB -> MiB)
 total_download_size=$(LC_ALL=C pacman -Si --dbpath "$CHECK_DB" $all_pkgs 2>/dev/null | awk '
     /^Download Size/ {
         val=$4
@@ -399,7 +377,6 @@ log_step "Processing data and calculating diffs..."
 now=$(date +%s)
 current_idx=0
 
-# Track Max Lengths
 max_name=7
 max_old=3
 max_new=3
@@ -410,7 +387,6 @@ while read -r line; do
     ((current_idx++))
     percent=$(( current_idx * 100 / pkg_count ))
 
-    # Update UI only every 5% or on last item to speed up loop
     if (( percent % 5 == 0 || current_idx == pkg_count )); then
         filled=$(( percent / 5 ))
         empty=$(( 20 - filled ))
@@ -425,39 +401,32 @@ while read -r line; do
     old_ver=$(echo "$line" | awk '{print $2}')
     new_ver=$(echo "$line" | awk '{print $4}')
 
-    # Retrieve Data
     IFS='|' read -r repo date_new size desc <<< "${NEW_DATA[$pkgname]}"
     IFS='|' read -r date_old reason <<< "${OLD_DATA[$pkgname]}"
 
-    # Determine "Explicit" vs "Dependency"
     is_explicit=0
     [[ "$reason" == *"Explicitly"* ]] && is_explicit=1
 
-    # Update lengths
     (( ${#pkgname} > max_name )) && max_name=${#pkgname}
     (( ${#old_ver} > max_old )) && max_old=${#old_ver}
     (( ${#new_ver} > max_new )) && max_new=${#new_ver}
     (( ${#repo} > max_repo )) && max_repo=${#repo}
     (( ${#size} > max_size )) && max_size=${#size}
 
-    # Calculate Age
     diff_hours=9999
     if [[ -n "$date_new" ]]; then
         build_time=$(date -d "$date_new" +%s 2>/dev/null || echo 0)
         diff_hours=$(( (now - build_time) / 3600 ))
     fi
 
-    # Determine Priority
     is_crit=0
     [[ ${CRIT_MAP["$pkgname"]} ]] && is_crit=1
 
     upd_type=$(get_update_type "$old_ver" "$new_ver")
 
-    # Sort Key
     sort_prio=$(( 1 - is_crit ))
     sort_key=$(printf "%d.%05d" "$sort_prio" "$diff_hours")
 
-    # Write to Temp
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "$sort_key" "$diff_hours" "$is_crit" "$upd_type" "$pkgname" "$old_ver" "$new_ver" \
         "$repo" "$size" "$is_explicit" "$date_old" "$date_new" "$desc" >> "$OUTPUT_FILE"
@@ -467,7 +436,6 @@ done <<< "$updates"
 echo -e "\n"
 
 # --- 7. Table Output ---
-
 w_age=6
 w_stat=8
 w_repo=$(( max_repo ))
@@ -478,23 +446,18 @@ w_new=$(( max_new ))
 w_size=$(( max_size ))
 w_date=12
 
-# Calculate remaining width for Description
 term_cols=$(tput cols)
-# The sum of all fixed margins and paddings
 used_width=$(( w_age + 1 + w_stat + 1 + w_repo + 1 + w_type + 1 + w_name + 1 + w_old + 3 + w_new + 1 + w_size + 1 + w_date + 1 ))
 w_desc=$(( term_cols - used_width - 1 ))
 
-# Protection against negative width on narrow screens
 if (( w_desc < 5 )); then
     w_desc=0
 fi
 
 sep_line=$(printf "%${term_cols}s" | tr ' ' '-')
 
-# Header
 printf "${dim}%s${reset}\n" "$sep_line"
 
-# Function for centering text
 fmt_center() {
     local str="$1"
     local width="$2"
@@ -508,7 +471,6 @@ fmt_center() {
     fi
 }
 
-# Generating centered headings
 h_age=$(fmt_center "AGE" "$w_age")
 h_stat=$(fmt_center "STATUS" "$w_stat")
 h_repo=$(fmt_center "REPO" "$w_repo")
@@ -519,21 +481,16 @@ h_new=$(fmt_center "NEW" "$w_new")
 h_size=$(fmt_center "SIZE" "$w_size")
 h_date=$(fmt_center "NEW DATE" "$w_date")
 
-# Description title (if there is space)
 h_desc="DESCRIPTION"
 (( w_desc == 0 )) && h_desc=""
 
-# Printing Headlines
-# There are spaces between %s that correspond to the indentations in the data lines.
 printf "${bold}${gray}%s %s %s %s %s %s   %s %s %s %s${reset}\n" \
     "$h_age" "$h_stat" "$h_repo" "$h_type" "$h_name" "$h_old" "$h_new" "$h_size" "$h_date" "$h_desc"
 
 printf "${dim}%s${reset}\n" "$sep_line"
 
-# Output Rows
 sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours is_crit upd_type pkgname old_ver new_ver repo size is_explicit date_old date_new desc; do
 
-    # 1. Age
     if (( diff_hours == 9999 )); then age_disp="[?]"; age_col=$dim
     else
         age_disp="[${diff_hours}h]"
@@ -544,22 +501,18 @@ sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours is_crit upd_type
     printf -v f_age "%-${w_age}s" "$age_disp"
     out_age="${age_col}${f_age}${reset}"
 
-    # 2. Status
     if (( is_crit == 1 )); then
         if (( diff_hours < 24 )); then out_stat="${bg_crit} ! CRIT ${reset}"
         else out_stat="${bg_core}  CORE  ${reset}"; fi
     else out_stat="$(printf "%-${w_stat}s" " ")"; fi
 
-    # 3. Repo (Dimmed) - Pad CONTENT, then color
     printf -v f_repo "%-${w_repo}s" "$repo"
     out_repo="${dim}${f_repo}${reset}"
 
-    # 4. Type
     type_col=$(get_type_color "$upd_type")
     printf -v f_type "%-${w_type}s" "$upd_type"
     out_type="${type_col}${f_type}${reset}"
 
-    # 5. Name (Highlight if Explicit)
     if (( is_explicit == 1 )); then
         name_col="${white}${bold}"
     else
@@ -568,21 +521,17 @@ sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours is_crit upd_type
     printf -v f_name "%-${w_name}s" "$pkgname"
     out_name="${name_col}${f_name}${reset}"
 
-    # 6. Dates (Fixed Width Alignment)
     if [[ -n "$date_new" ]]; then
         f_date_raw=$(LC_TIME=C date -d "$date_new" "+%d %b %H:%M" 2>/dev/null)
     else
         f_date_raw=""
     fi
-    # Align the date line before adding colors
     printf -v f_date_padded "%-${w_date}s" "$f_date_raw"
     out_date_new="${dim}${f_date_padded}${reset}"
 
-    # 7. Size
     printf -v f_size "%-${w_size}s" "$size"
     out_size="${white}${f_size}${reset}"
 
-    # 8. Description (Truncated)
     if (( w_desc > 0 )); then
         if (( ${#desc} > w_desc )); then
             out_desc="${dim}${desc:0:$((w_desc-1))}…${reset}"
@@ -593,8 +542,6 @@ sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours is_crit upd_type
         out_desc=""
     fi
 
-    # Print Line
-    # Using %b for blocks containing color codes
     printf "%b %b %b %b %b ${gray}%${w_old}s${reset} ${blue}→${reset} ${white}%-${w_new}s${reset} %b %b %b\n" \
         "$out_age" "$out_stat" "$out_repo" "$out_type" "$out_name" \
         "$old_ver" "$new_ver" "$out_size" "$out_date_new" "$out_desc"
@@ -605,13 +552,10 @@ printf "${dim}%s${reset}\n" "$sep_line"
 echo -e "  ${gray}Total Download Size: ${white}${bold}${total_download_size}${reset}"
 
 # --- 8. Update Request ---
-
-# Check for packages that require a reboot
 if awk -F'\t' '$5 ~ /^(linux.*|nvidia.*|systemd.*|.*-ucode|cryptsetup|glibc|linux-firmware|mesa|wayland|xorg-server|dbus.*|qt[56]-base|plasma-.*|kwin|egl-wayland)$/' "$OUTPUT_FILE" | grep -q .; then
     echo -e "  ${red}${bold}⚠  Kernel/Core/DE update detected. Reboot will be required!${reset}"
 fi
 
-# Checking commands
 if command -v eos-update &> /dev/null; then
     CORE_CMD="eos-update"
 else
@@ -623,7 +567,6 @@ if command -v topgrade &> /dev/null; then
     EXTRA_CMD="topgrade"
 fi
 
-# Forming a query string for the user (Restored executable command string)
 if [[ -n "$EXTRA_CMD" ]]; then
     PROMPT_CMD="${CORE_CMD} && ${EXTRA_CMD}"
 else
@@ -639,34 +582,25 @@ read -r answer
 if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     echo -e "\n"
 
-    # 1. Running a major system update
     $CORE_CMD
-    # Saving the return code
     core_exit=$?
 
-    # Checking if there are any updates left in the system
-    # This is the Source of Truth, independent of exit codes
     pending_updates=$(LC_ALL=C pacman -Qu 2>/dev/null)
 
-    # Topgrade Launch Decision Logic
     run_extra=false
 
-    # SCENARIO A: The system is clean (Updates successfully applied)
     if [[ -z "$pending_updates" ]]; then
         if [[ $core_exit -eq 0 ]]; then
             echo -e "\n${green}✔ Core updates applied successfully.${reset}"
             run_extra=true
         else
-            # Exit code was non-zero, but updates are gone (weird but success)
             echo -e "\n${green}✔ No core updates pending.${reset}"
             run_extra=true
         fi
 
-    # SCENARIO B: Updates are stuck (Cancelled, Failed, or Partial)
     else
         echo -e "\n${yellow}⚠  Core updates were NOT fully applied (Cancelled or Failed).${reset}"
 
-        # If Topgrade is installed, ask whether to launch it manually
         if [[ -n "$EXTRA_CMD" ]]; then
             echo -ne "  ${white}Run ${EXTRA_CMD} anyway? (Flatpaks/AUR etc) [y/N]: ${reset}"
             read -r force_extra
@@ -678,12 +612,10 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
         fi
     fi
 
-    # 2. Launching Topgrade
     if [[ "$run_extra" == true && -n "$EXTRA_CMD" ]]; then
         echo -e "\n${blue}${bold}  󰚰  Running Topgrade...${reset}\n"
         $EXTRA_CMD
     elif [[ -n "$pending_updates" ]]; then
-        # Restored feedback for partial/cancelled state
         echo -e "\n${red}  ✘ System partially updated or update cancelled.${reset}\n"
     fi
 
