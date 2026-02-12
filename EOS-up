@@ -228,12 +228,10 @@ backup_pacman_db() {
     local BACKUP_DATE=$(date +%Y%m%d_%H%M%S)
     local BACKUP_FILE="$BACKUP_DIR/pacman_database_$BACKUP_DATE.tar.gz"
 
-    if sudo tar -czf "$BACKUP_FILE" -C /var/lib/pacman/ local; then
+    if sudo tar --xattrs --warning=no-file-changed -czf "$BACKUP_FILE" -C /var/lib/pacman/ local; then
         echo -e "  ${green}✔ Backup created: ${white}$(basename "$BACKUP_FILE")${reset}"
 
-        sudo ls -tp "$BACKUP_DIR" | grep -v '/$' | tail -n +$((KEEP_COPIES + 1)) | while read -r old_backup; do
-            sudo rm "$BACKUP_DIR/$old_backup"
-        done
+        (cd "$BACKUP_DIR" && ls -tp pacman_database_*.tar.gz | grep -v '/$' | tail -n +$((KEEP_COPIES + 1)) | xargs -I {} sudo rm -- {})
     else
         echo -e "  ${red}✘ Failed to create backup!${reset}"
         echo -ne "  ${yellow}Continue anyway? [y/N]: ${reset}"
