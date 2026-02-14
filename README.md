@@ -1,20 +1,6 @@
-# ❗ Compatibility Warning
-
-This script is specifically tuned for **EndeavourOS** running the **KDE Plasma** Desktop Environment.
-
-While the core update logic works on any Arch-based system, the **Critical Package List** (`CRITICAL_PKGS`) and **Reboot Detection** logic are optimized for:
-*   **OS:** EndeavourOS
-*   **DE:** KDE Plasma 6 (Qt 6, Wayland)
-*   **GPU:** Nvidia (Proprietary/Open) & AMD (Mesa)
-*   **Shell:** Bash
-
-*If you use GNOME, Hyprland, or a different setup, you may need to adjust the package lists in the script.*
-
----
-
 # 🛡️ EndeavourOS Smart Update Wrapper
 
-A robust Bash script designed to make EndeavourOS updates safer and more informative. It analyzes pending updates before installation, highlights critical system components, and checks for official Arch Linux news.
+A robust Bash script designed to make EndeavourOS (and Arch Linux) updates safer, more informative, and visually distinct. It analyzes pending updates before installation, highlights an extensive list of critical system components and Desktop Environments, and checks for official Arch Linux news.
 
 # ✨ Key Features
 
@@ -26,7 +12,7 @@ The script performs pacman -Sy into a temporary directory instead of the system 
 # 2. 📰 Arch News Integration
 
 Checks the official Arch Linux News feed before syncing databases.
-•  Alerts you to news items from the last 14 days to ensure you don't miss manual intervention notices.
+•  Warns you of news items from the last 14 days.
 •  Acts as a safeguard against "blind" updates that could break the system.
 
 # 3. 🧠 Semantic Version Analysis
@@ -38,25 +24,33 @@ Instead of just showing version numbers, the script calculates the type of updat
 
 # 4. 🎯 Critical Package Highlighting
 
-Includes a curated list of critical packages (Kernel, Nvidia, Glibc, Systemd, Mesa, KDE/Qt, etc.).
-•  These are tagged as CORE or CRIT.
-•  Highlighted with distinct backgrounds to catch your eye immediately.
+The script now monitors a massive list of system-critical packages.
+If any of these are in the update list, they are highlighted with a Red (CRIT) or Dark Gray (CORE) background.
+Covered Categories:
+•  Kernels: Linux (Stable, LTS, Zen, Hardened) & Firmware.
+•  Drivers: NVIDIA (Proprietary/Open/DKMS), AMD (Mesa/Vulkan/ROCm), Intel (Media/Compute).
+•  Base System: Systemd, Glibc, Grub, Cryptsetup, LLVM, Pacman/Keyrings.
+•  Audio & Net: Pipewire, Wireplumber, NetworkManager, Bluez.
+•  Desktop Environments: KDE Plasma, GNOME, XFCE, LXQt, Cinnamon, MATE, COSMIC (Epoch).
+•  Window Managers: Hyprland, Sway, i3, Labwc, Qtile, Niri, Openbox.
 
 # 5. 🔄 Reboot Detector
 
-Smart heuristics to determine if a reboot is needed. It scans for updates to:
-•  Linux Kernels / Microcode
-•  Nvidia / Mesa drivers
-•  Systemd / Glibc / D-Bus
-•  Desktop Environment stack (Wayland, Plasma, Qt5/6)
-    ...and issues a warning: ⚠ Kernel/Core update detected. Reboot will be required!.
+Uses heuristics to determine if the specific updates usually require a system restart. It scans for updates to:
+•  Core: Kernels, Microcode, Systemd, Glibc, D-Bus, Cryptsetup.
+•  Graphics: NVIDIA drivers, Mesa stack, Wayland/Xorg servers.
+•  DE Frameworks: Qt5/Qt6 base, Plasma workspace, KWin.
+•  Warning: Displays ⚠ Kernel/Core/DE update detected. Reboot will be required! to prevent running the system in an unstable state.
 
 # 6. 🚀 Workflow Integration
 
-•  Designed for EndeavourOS (uses eos-update) but falls back to standard pacman.
-•  Optional integration with Topgrade to handle Flatpaks, AUR, and firmware updates after the core system update.
+•  EndeavourOS Native: Defaults to eos-update for the actual installation process.
+•  Arch Compatible: Falls back to sudo pacman -Syu if EOS tools are missing.
+•  Topgrade Support: Optional integration with topgrade to handle Flatpaks, AUR, and firmware updates automatically after the core system update.
+•  Backup: Automatically creates a backup of the pacman local database before applying updates.
 
 # 📦 Requirements
+•  bash
 •  pacman
 •  curl
 •  awk
