@@ -69,10 +69,10 @@ Uses heuristics to determine if the specific updates usually require a system re
 # 🛠️ Installation & Setup
 
 # 1. Create the script file and paste the code
-nano ~/EOS-up
+nano ~/EndeavourOS_Smart_Update_Wrapper
 
 # 2. Make the script executable
-chmod +x ~/EOS-up
+chmod +x ~/EndeavourOS_Smart_Update_Wrapper
 
 # 3. Make sure that your system uses bash:
 echo $0
@@ -81,7 +81,7 @@ echo $0
 nano ~/.bashrc
 
 # 5. Add the following alias to the end of the file:
-alias up="~/EOS-up"
+alias up="~/EndeavourOS_Smart_Update_Wrapper"
 
 # 6. Apply the changes immediately:
 source ~/.bashrc
