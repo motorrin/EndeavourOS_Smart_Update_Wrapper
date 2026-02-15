@@ -16,7 +16,7 @@ gray='\033[38;5;244m'
 bg_crit='\033[48;5;160;38;5;255;1m' # Red background
 bg_core='\033[48;5;237;38;5;214;1m' # Dark gray background
 
-# --- 2. Critical Package Configuration ---
+# --- 2.1 Critical Package Configuration ---
 CRITICAL_PKGS=(
     # --- Kernels & Microcode ---
     "linux" "linux-headers"
@@ -92,19 +92,22 @@ CRITICAL_PKGS=(
     "libva-mesa-driver" "lib32-libva-mesa-driver"
     "mesa-vdpau" "lib32-mesa-vdpau"
 
-    # Frameworks & Libraries
-    "qt6-base" "qt5-base" "kwayland" "egl-wayland"
-
     # Hybrid Graphics Switcher
     "switcheroo-control" "envycontrol" "optimus-manager"
 
     # Core Apps
     "dolphin" "konsole"
+)
 
-    # --- Audio & Networking ---
+# --- 2.2 Feature Package Configuration ---
+FEATURE_PKGS=(
+    # Audio & Networking
     "pipewire" "pipewire-audio" "wireplumber" "pipewire-pulse" "lib32-pipewire"
     "alsa-lib" "lib32-alsa-lib" "alsa-utils" "alsa-plugins"
     "networkmanager" "iwd" "wpa_supplicant" "bluez" "bluez-utils" "bluez-libs"
+
+    # Frameworks & Libraries
+    "qt6-base" "qt5-base" "kwayland" "egl-wayland"
 
     # --- KDE ---
     "plasma-desktop" "plasma-workspace" "kwin"
@@ -210,6 +213,9 @@ CRITICAL_PKGS=(
 declare -A CRIT_MAP
 for pkg in "${CRITICAL_PKGS[@]}"; do CRIT_MAP["$pkg"]=1; done
 
+declare -A FEAT_MAP
+for pkg in "${FEATURE_PKGS[@]}"; do FEAT_MAP["$pkg"]=1; done
+
 # --- 3. Temporary Files ---
 OUTPUT_FILE=$(mktemp)
 SYNC_LOG=$(mktemp)
@@ -241,7 +247,8 @@ log_step() {
 }
 
 get_update_type() {
-    local old=$1 new=$2
+    local old=$1
+    local new=$2
 
     local v_old=${old#*:}
     local v_new=${new#*:}
@@ -264,7 +271,8 @@ get_update_type() {
 
         if (( 10#$n_old != 10#$n_new )); then
 
-            if (( 10#$n_new >= 2020 && 10#$n_new <= 2100 )); then
+            if (( (10#$n_new >= 2020 && 10#$n_new <= 2100) || \
+                  (10#$n_new >= 20200000 && 10#$n_new <= 21001231) )); then
                 echo "CALVER"
                 return
             fi
@@ -573,15 +581,24 @@ while read -r line; do
     fi
 
     is_crit=0
+    is_feat=0
     [[ ${CRIT_MAP["$pkgname"]} ]] && is_crit=1
+    [[ ${FEAT_MAP["$pkgname"]} ]] && is_feat=1
+
+    if (( is_crit )); then
+        pkg_level=0
+    elif (( is_feat )); then
+        pkg_level=1
+    else
+        pkg_level=2
+    fi
 
     upd_type=$(get_update_type "$old_ver" "$new_ver")
 
-    sort_prio=$(( 1 - is_crit ))
-    sort_key=$(printf "%d.%05d" "$sort_prio" "$diff_hours")
+    sort_key=$(printf "%d.%05d" "$pkg_level" "$diff_hours")
 
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-        "$sort_key" "$diff_hours" "$is_crit" "$upd_type" "$pkgname" "$old_ver" "$new_ver" \
+        "$sort_key" "$diff_hours" "$pkg_level" "$upd_type" "$pkgname" "$old_ver" "$new_ver" \
         "$repo" "$size" "$is_explicit" "$date_old" "$date_new" "$desc" >> "$OUTPUT_FILE"
 
 done <<< "$updates"
@@ -642,7 +659,7 @@ printf "${bold}${gray}%s %s %s %s %s %s   %s %s %s %s${reset}\n" \
 
 printf "${dim}%s${reset}\n" "$sep_line"
 
-sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours is_crit upd_type pkgname old_ver new_ver repo size is_explicit date_old date_new desc; do
+sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_type pkgname old_ver new_ver repo size is_explicit date_old date_new desc; do
 
     if (( diff_hours == 9999 )); then age_disp="[?]"; age_col=$dim
     else
@@ -654,10 +671,14 @@ sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours is_crit upd_type
     printf -v f_age "%-${w_age}s" "$age_disp"
     out_age="${age_col}${f_age}${reset}"
 
-    if (( is_crit == 1 )); then
-        if (( diff_hours < 24 )); then out_stat="${bg_crit} ! CRIT ${reset}"
-        else out_stat="${bg_core}  CORE  ${reset}"; fi
-    else out_stat="$(printf "%-${w_stat}s" " ")"; fi
+    if (( pkg_level == 0 )); then
+        out_stat="${bg_crit} ! CRIT ${reset}"
+    elif (( pkg_level == 1 )); then
+        bg_feat='\033[48;5;214;38;5;0;1m'
+        out_stat="${bg_feat} * FEAT ${reset}"
+    else
+        out_stat="$(printf "%-${w_stat}s" " ")"
+    fi
 
     printf -v f_repo "%-${w_repo}s" "$repo"
     out_repo="${dim}${f_repo}${reset}"
@@ -703,6 +724,161 @@ done
 
 printf "${dim}%s${reset}\n" "$sep_line"
 echo -e "  ${gray}Total Download Size: ${white}${bold}${total_download_size}${reset}"
+
+give_advice() {
+    local now=$(date +%s)
+
+    local T_MIRROR_H=3
+    local T_FEAT_H=6
+    local T_CRIT_H=12
+    local T_DE_H=12
+
+    local T_MIRROR_SEC=$(( T_MIRROR_H * 3600 ))
+    local T_FEAT_SEC=$(( T_FEAT_H * 3600 ))
+    local T_CRIT_SEC=$(( T_CRIT_H * 3600 ))
+    local T_DE_SEC=$(( T_DE_H * 3600 ))
+
+    local fresh_pkg_count=0
+    local fresh_crit_count=0
+    local fresh_feat_count=0
+    local fresh_de_count=0
+
+    local min_age_norm_sec=999999999
+    local min_age_crit_sec=999999999
+    local min_age_feat_sec=999999999
+    local min_age_de_sec=999999999
+
+    local risky_norm_pkg=""
+    local risky_crit_pkg=""
+    local risky_feat_pkg=""
+    local risky_de_pkg=""
+
+    local DE_PATTERN="^(plasma-|gnome-|hyprland|kwin|mutter|cinnamon|xfce4|qt[56]-|gtk[34]|kf[56]-|frameworkintegration)"
+
+    while IFS=$'\t' read -r _ _ pkg_level _ pkgname _ _ _ _ _ _ date_new _; do
+
+        [[ -z "$date_new" ]] && continue
+
+        local pkg_ts
+        pkg_ts=$(date -d "$date_new" +%s 2>/dev/null || echo 0)
+
+        (( pkg_ts == 0 )) && continue
+
+        local age_sec=$(( now - pkg_ts ))
+        (( age_sec < 0 )) && age_sec=0
+
+        if [[ "$pkgname" =~ $DE_PATTERN ]]; then
+            if (( age_sec < T_DE_SEC )); then
+                ((fresh_de_count++))
+                if (( age_sec < min_age_de_sec )); then
+                    min_age_de_sec=$age_sec
+                    risky_de_pkg=$pkgname
+                fi
+            fi
+        fi
+
+        if (( pkg_level == 0 )); then
+            if (( age_sec < T_CRIT_SEC )); then
+                ((fresh_crit_count++))
+                if (( age_sec < min_age_crit_sec )); then
+                    min_age_crit_sec=$age_sec
+                    risky_crit_pkg=$pkgname
+                fi
+            fi
+        fi
+
+        if (( pkg_level == 1 )); then
+            if (( age_sec < T_FEAT_SEC )); then
+                ((fresh_feat_count++))
+                if (( age_sec < min_age_feat_sec )); then
+                    min_age_feat_sec=$age_sec
+                    risky_feat_pkg=$pkgname
+                fi
+            fi
+        fi
+
+        if (( age_sec < T_MIRROR_SEC )); then
+            ((fresh_pkg_count++))
+            if (( age_sec < min_age_norm_sec )); then
+                min_age_norm_sec=$age_sec
+                risky_norm_pkg=$pkgname
+            fi
+        fi
+
+    done < "$OUTPUT_FILE"
+
+    echo -e "${dim}---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------${reset}"
+
+    local max_wait_sec=0
+    local verdict_level=0 # 0=Safe, 1=Yellow, 2=Red
+    local reasons=()
+
+    if (( fresh_de_count > 0 )); then
+        local wait=$(( T_DE_SEC - min_age_de_sec ))
+        (( wait > max_wait_sec )) && max_wait_sec=$wait
+        verdict_level=2
+        reasons+=("Major DE update detected (< ${T_DE_H}h). (e.g., $risky_de_pkg)")
+    fi
+
+    if (( fresh_crit_count > 0 )); then
+        local wait=$(( T_CRIT_SEC - min_age_crit_sec ))
+        (( wait > max_wait_sec )) && max_wait_sec=$wait
+        verdict_level=2
+        reasons+=("Fresh Critical/Kernel updates (< ${T_CRIT_H}h). (e.g., $risky_crit_pkg)")
+    fi
+
+    if (( fresh_feat_count > 0 )); then
+        local wait=$(( T_FEAT_SEC - min_age_feat_sec ))
+        (( wait > max_wait_sec )) && max_wait_sec=$wait
+        (( verdict_level < 1 )) && verdict_level=1
+        reasons+=("Fresh Feature updates (< ${T_FEAT_H}h). (e.g., $risky_feat_pkg)")
+    fi
+
+    if (( fresh_pkg_count > 0 )); then
+        local wait=$(( T_MIRROR_SEC - min_age_norm_sec ))
+        (( wait > max_wait_sec )) && max_wait_sec=$wait
+        (( verdict_level < 1 )) && verdict_level=1
+        reasons+=("Mirrors might not be fully synced (< ${T_MIRROR_H}h). (e.g., $risky_norm_pkg)")
+    fi
+
+    local color=$green
+    local verdict="SAFE"
+
+    if (( verdict_level == 1 )); then
+        color=$yellow
+        verdict="REVIEW"
+    elif (( verdict_level == 2 )); then
+        color=$red
+        verdict="HOLD"
+    fi
+
+    printf "  ${bold}ADVISOR:${reset} "
+
+    if (( max_wait_sec == 0 )); then
+        echo -e "${green}${bold}✅  GO FOR IT!${reset} ${dim}(Packages have matured. Mirrors should be consistent.)${reset}"
+    else
+        local target_time=$(date -d "@$(( now + max_wait_sec ))" +%H:%M)
+
+        local wait_h=$(( max_wait_sec / 3600 ))
+        local wait_m=$(( (max_wait_sec % 3600) / 60 ))
+        local dur_str="+"
+        (( wait_h > 0 )) && dur_str+="${wait_h}h "
+        dur_str+="${wait_m}m"
+
+        echo -e "${color}${bold}✋  $verdict${reset} ${white}→ Better update at ${bold}$target_time${reset} ($dur_str)"
+
+        if (( ${#reasons[@]} > 0 )); then
+             echo -ne "           ${dim}Reason: ${reasons[0]}${reset}"
+             for (( i=1; i<${#reasons[@]}; i++ )); do
+                 echo -ne "\n                   ${dim}+ ${reasons[$i]}${reset}"
+             done
+             echo ""
+        fi
+    fi
+    echo -e "${dim}---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------${reset}"
+}
+
+give_advice
 
 # --- 8. Update Request ---
 if awk -F'\t' '$5 ~ /^(linux.*|nvidia.*|systemd.*|.*-ucode|cryptsetup|glibc|linux-firmware|mesa|wayland|xorg-server|dbus.*|qt[56]-base|plasma-.*|kwin|egl-wayland)$/' "$OUTPUT_FILE" | grep -q .; then
