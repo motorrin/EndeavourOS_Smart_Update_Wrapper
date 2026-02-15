@@ -377,13 +377,25 @@ refresh_mirrors() {
     echo -ne "  ${white}Refresh mirrors (Germany/Netherlands, HTTPS, Rate)? [Y/n]: ${reset}"
     read -r ans
     if [[ "$ans" =~ ^[Yy]$ || -z "$ans" ]]; then
-        echo -e "  ${blue}Running reflector (WARNINGS ARE EXPECTED)${reset}"
+
+        if command -v eos-rankmirrors &>/dev/null; then
+            echo -e "  ${blue}󰚰  Ranking EndeavourOS mirrors (Timeout: 5s)...${reset}"
+            if sudo eos-rankmirrors -t 5 > /dev/null; then
+                echo -e "  ${green}  ✔ EndeavourOS mirrors updated.${reset}"
+            else
+                echo -e "  ${red}  ✘ Failed to rank EOS mirrors.${reset}"
+            fi
+        fi
+
         if command -v reflector &>/dev/null; then
+            echo -e "\n  ${blue}󰚰  Running reflector for Arch Linux...${reset}"
+            echo -e "  ${dim}  Searching Germany/Netherlands, HTTPS, Rate... (WARNINGS ARE EXPECTED)${reset}"
+
             if sudo reflector --country Germany,Netherlands --protocol https --sort rate --save /etc/pacman.d/mirrorlist --download-timeout 5; then
-                echo -e "  ${green}✔ Mirrors updated successfully.${reset}\n"
+                echo -e "  ${green}  ✔ Arch mirrors updated successfully.${reset}\n"
                 return 0
             else
-                echo -e "  ${red}✘ Reflector failed.${reset}\n"
+                echo -e "  ${red}  ✘ Reflector failed.${reset}\n"
                 return 1
             fi
         else
