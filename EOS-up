@@ -33,7 +33,6 @@ CRITICAL_PKGS=(
     "nvidia-open" "nvidia-open-lts" "nvidia-open-dkms"
     "nvidia-utils" "nvidia-settings" "lib32-nvidia-utils"
     "opencl-nvidia" "lib32-opencl-nvidia"
-    "nvidia-470xx-dkms" "nvidia-390xx-dkms"
     "nvidia-prime" "cuda" "lib32-cuda"
 
     # --- Systemd & Init ---
@@ -52,9 +51,14 @@ CRITICAL_PKGS=(
     "cryptsetup" "device-mapper" "lvm2" "zstd"
     "llvm" "llvm-libs" "lib32-llvm-libs" "clang"
 
+    # --- Filesystems ---
+    "btrfs-progs" "dosfstools" "e2fsprogs"
+    "xfsprogs" "ntfs-3g" "exfatprogs"
+
     # --- Package Management ---
     "pacman" "pacman-contrib"
     "pacman-mirrorlist" "endeavouros-mirrorlist"
+    "pam" "pambase"
     "archlinux-keyring" "endeavouros-keyring"
     "yay" "paru"
 
@@ -105,7 +109,7 @@ CRITICAL_PKGS=(
     # --- KDE ---
     "plasma-desktop" "plasma-workspace" "kwin"
     "systemsettings" "sddm" "kde-cli-tools" "powerdevil"
-    "polkit-kde-agent" "polkit-kde-agent-1" "breeze" "qt6-wayland"
+    "polkit-kde-agent" "breeze" "qt6-wayland"
     "xdg-desktop-portal-kde" "spectacle" "kinfocenter"
     "plasma-nm" "plasma-pa" "kscreen" "dolphin"
 
@@ -114,13 +118,14 @@ CRITICAL_PKGS=(
     "gnome-control-center" "gnome-settings-daemon"
     "gdm" "libadwaita" "gtk4" "gtk3"
     "xdg-desktop-portal-gnome" "gnome-keyring" "nautilus"
-    "gvfs" "xdg-user-dirs-gtk"
+    "gvfs" "xdg-user-dirs-gtk" "gnome-terminal" "console"
 
     # --- COSMIC ---
     "cosmic-comp" "cosmic-session" "cosmic-greeter"
     "cosmic-settings" "cosmic-panel" "cosmic-applets"
     "cosmic-launcher" "cosmic-workspaces" "cosmic-files"
     "xdg-desktop-portal-cosmic" "cosmic-notifications"
+    "cosmic-bg" "cosmic-osd" "cosmic-randr" "cosmic-app-library"
 
     # --- XFCE ---
     "xfwm4" "xfce4-session" "xfce4-panel"
@@ -156,6 +161,7 @@ CRITICAL_PKGS=(
     "hyprlock" "hypridle" "hyprpaper"
     "qt6-wayland" "qt5-wayland" "kitty"
     "polkit-gnome" "dunst" "network-manager-applet"
+    "hyprgraphics" "hyprland-qtutils" "hyprland-guiutils"
 
     # --- CINNAMON ---
     "cinnamon" "cinnamon-session"
@@ -190,6 +196,8 @@ CRITICAL_PKGS=(
     "python-pywlroots" "python-cffi" "python-dbus-next"
     "python-gobject"
     "polkit-gnome" "dunst" "network-manager-applet"
+    "python-cairocffi" "python-xcffib"
+    "python-pywayland" "python-xkbcommon"
 
     # --- NIRI ---
     "niri" "fuzzel" "mako"
