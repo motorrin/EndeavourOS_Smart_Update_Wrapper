@@ -31,10 +31,10 @@ NUCLEAR_PKGS=(
     "cryptsetup" "device-mapper" "lvm2"
     "mkinitcpio" "dracut"
 
-    # --- Microcode (AMD & INTEL) ---
+    # --- Microcode ---
     "amd-ucode" "intel-ucode"
 
-    # --- Kernels (Regression Risks) ---
+    # --- Kernels ---
     "linux" "linux-headers"
     "linux-lts" "linux-lts-headers"
     "linux-zen" "linux-zen-headers"
@@ -911,7 +911,7 @@ give_advice() {
         local wait=$(( T_MIRROR_SEC - min_age_norm_sec ))
         (( wait > max_wait_sec )) && max_wait_sec=$wait
         (( verdict_level < 1 )) && verdict_level=1
-        reasons+=("Mirrors inconsistency risk (< ${T_MIRROR_H}h). (e.g., $risky_norm_pkg)")
+        reasons+=("Mirrors might not be fully synced (< ${T_MIRROR_H}h). (e.g., $risky_norm_pkg)")
     fi
 
     local color=$green
@@ -926,13 +926,18 @@ give_advice() {
     printf "  ${bold}ADVISOR:${reset} "
 
     if (( max_wait_sec == 0 )); then
-        echo -e "${green}${bold}✅  GO FOR IT!${reset} ${dim}(System allows update. Mirrors synced.)${reset}"
+        echo -e "${green}${bold}✅  GO FOR IT!${reset} ${dim}(Packages have stabilized. Mirrors synced.)${reset}"
     else
         local target_time=$(date -d "@$(( now + max_wait_sec ))" +%H:%M)
+
         local wait_h=$(( max_wait_sec / 3600 ))
         local wait_m=$(( (max_wait_sec % 3600) / 60 ))
 
-        echo -e "${color}${bold}$verdict${reset} ${white}→ Recommend waiting until ${bold}$target_time${reset} (+${wait_h}h ${wait_m}m)"
+        local dur_str="+"
+        (( wait_h > 0 )) && dur_str+="${wait_h}h "
+        dur_str+="${wait_m}m"
+
+        echo -e "${color}${bold}$verdict${reset} ${white}→ Recommend waiting until ${bold}$target_time${reset} ($dur_str)"
 
         if (( ${#reasons[@]} > 0 )); then
              echo -ne "           ${dim}Reason: ${reasons[0]}${reset}"
