@@ -373,8 +373,10 @@ backup_pacman_db() {
 
 # --- 5. Mirror Refresh Function ---
 refresh_mirrors() {
-    echo -e "\n${yellow}${bold}⚠  Mirror instability detected (timeouts or errors).${reset}"
-    echo -ne "  ${white}Refresh mirrors (Germany/Netherlands, HTTPS, Rate)? [Y/n]: ${reset}"
+    local reason="${1:-Mirror instability detected (timeouts or errors).}"
+
+    echo -e "\n${yellow}${bold}⚠  $reason${reset}"
+    echo -ne "  ${white}Refresh mirrors (Germany/Netherlands, HTTPS, Rate, Age < 6h)? [Y/n]: ${reset}"
     read -r ans
     if [[ "$ans" =~ ^[Yy]$ || -z "$ans" ]]; then
 
@@ -389,13 +391,13 @@ refresh_mirrors() {
 
         if command -v reflector &>/dev/null; then
             echo -e "\n  ${blue}󰚰  Running reflector for Arch Linux...${reset}"
-            echo -e "  ${dim}  Searching Germany/Netherlands, HTTPS, Rate... (WARNINGS ARE EXPECTED)${reset}"
+            echo -e "  ${dim}  Searching Germany/Netherlands, HTTPS, Age < 6h... (WARNINGS ARE EXPECTED)${reset}"
 
-            if sudo reflector --country Germany,Netherlands --protocol https --sort rate --save /etc/pacman.d/mirrorlist --download-timeout 5; then
+            if sudo reflector --country Germany,Netherlands --protocol https --age 6 --number 20 --sort rate --save /etc/pacman.d/mirrorlist --download-timeout 5; then
                 echo -e "  ${green}  ✔ Arch mirrors updated successfully.${reset}\n"
                 return 0
             else
-                echo -e "  ${red}  ✘ Reflector failed.${reset}\n"
+                echo -e "  ${red}  ✘ Reflector failed (Too strict? Try manual update).${reset}\n"
                 return 1
             fi
         else
@@ -428,6 +430,18 @@ if [[ -f /var/lib/pacman/db.lck ]]; then
 fi
 
 check_arch_news
+
+MIRROR_LIST="/etc/pacman.d/mirrorlist"
+if [[ -f "$MIRROR_LIST" ]]; then
+    now_ts=$(date +%s)
+    file_ts=$(stat -c %Y "$MIRROR_LIST" 2>/dev/null || echo "$now_ts")
+
+    mirror_age_days=$(( (now_ts - file_ts) / 86400 ))
+
+    if (( mirror_age_days >= 7 )); then
+        refresh_mirrors "Mirrors are old (${mirror_age_days} days)."
+    fi
+fi
 
 log_step "Symlinking local DB..."
 ln -s /var/lib/pacman/local "$CHECK_DB/local" > /dev/null 2>&1
