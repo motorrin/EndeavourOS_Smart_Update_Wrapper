@@ -15,40 +15,61 @@ gray='\033[38;5;244m'
 
 bg_crit='\033[48;5;160;38;5;255;1m' # Red background
 bg_core='\033[48;5;237;38;5;214;1m' # Dark gray background
+bg_nuke='\033[48;5;196;38;5;255;1m' # Bright Red background
 
-# --- 2.1 Critical Package Configuration ---
-CRITICAL_PKGS=(
-    # --- Kernels & Microcode ---
+# --- 2.1 Nuclear Package Configuration ---
+NUCLEAR_PKGS=(
+    # --- The Core of the Core ---
+    "glibc" "lib32-glibc"
+    "gcc-libs" "lib32-gcc-libs"
+    "ncurses" "readline"
+    "openssl"
+
+    # --- Boot & Init ---
+    "grub" "efibootmgr" "os-prober"
+    "systemd" "systemd-libs" "systemd-sysvcompat"
+    "cryptsetup" "device-mapper" "lvm2"
+    "mkinitcpio" "dracut"
+
+    # --- Microcode (AMD & INTEL) ---
+    "amd-ucode" "intel-ucode"
+
+    # --- Kernels (Regression Risks) ---
     "linux" "linux-headers"
     "linux-lts" "linux-lts-headers"
     "linux-zen" "linux-zen-headers"
     "linux-hardened" "linux-hardened-headers"
     "linux-firmware"
 
-    # --- Microcode (AMD & INTEL) ---
-    "amd-ucode" "intel-ucode" "sof-firmware"
-
-    # --- NVIDIA Drivers ---
+    # --- NVIDIA ---
     "nvidia" "nvidia-lts" "nvidia-dkms"
     "nvidia-open" "nvidia-open-lts" "nvidia-open-dkms"
-    "nvidia-utils" "nvidia-settings" "lib32-nvidia-utils"
+    "nvidia-utils" "lib32-nvidia-utils"
+
+    # --- Package Manager Self-Update ---
+    "pacman" "archlinux-keyring" "endeavouros-keyring"
+)
+
+# --- 2.2 Critical Package Configuration ---
+CRITICAL_PKGS=(
+    # --- Firmware ---
+    "sof-firmware"
+
+    # --- NVIDIA Drivers ---
+    "nvidia-settings"
     "opencl-nvidia" "lib32-opencl-nvidia"
     "nvidia-prime" "cuda" "lib32-cuda"
 
     # --- Systemd & Init ---
-    "systemd" "systemd-libs"
-    "systemd-sysvcompat"
     "systemd-resolvconf"
     "lib32-systemd"
 
     # --- Core System & Base ---
     "base" "base-devel" "filesystem"
-    "glibc" "lib32-glibc" "dbus" "dbus-broker"
-    "glib2" "lib32-glib2" "sqlite" "readline" "ncurses"
-    "gcc-libs" "lib32-gcc-libs" "util-linux"
-    "libutil-linux" "openssl" "coreutils" "icu"
-    "bash" "zsh" "sudo" "polkit" "shadow"
-    "cryptsetup" "device-mapper" "lvm2" "zstd"
+    "dbus" "dbus-broker"
+    "glib2" "lib32-glib2" "sqlite"
+    "util-linux" "libutil-linux" "coreutils" "icu"
+    "bash" "zsh" "sudo" "polkit" "shadow" "zstd"
     "llvm" "llvm-libs" "lib32-llvm-libs" "clang"
     "python" "dkms" "fuse3"
 
@@ -57,17 +78,13 @@ CRITICAL_PKGS=(
     "xfsprogs" "ntfs-3g" "exfatprogs"
 
     # --- Package Management ---
-    "pacman" "pacman-contrib"
+    "pacman-contrib"
     "pacman-mirrorlist" "endeavouros-mirrorlist"
     "pam" "pambase"
-    "archlinux-keyring" "endeavouros-keyring"
     "yay" "paru"
 
     # --- EndeavourOS Specific ---
     "eos-update" "eos-hooks"
-
-    # --- Bootloaders ---
-    "grub" "efibootmgr" "os-prober" "dracut" "mkinitcpio"
 
     # --- Graphics Stack ---
     "mesa" "lib32-mesa" "mesa-utils" "mesa-libgl"
@@ -97,7 +114,7 @@ CRITICAL_PKGS=(
     "dolphin" "konsole"
 )
 
-# --- 2.2 Feature Package Configuration ---
+# --- 2.3 Feature Package Configuration ---
 FEATURE_PKGS=(
     # Audio & Networking
     "pipewire" "pipewire-audio" "wireplumber" "pipewire-pulse" "lib32-pipewire"
@@ -210,6 +227,9 @@ FEATURE_PKGS=(
     "xdg-desktop-portal-gtk"
     "polkit-gnome" "network-manager-applet"
 )
+
+declare -A NUKE_MAP
+for pkg in "${NUCLEAR_PKGS[@]}"; do NUKE_MAP["$pkg"]=1; done
 
 declare -A CRIT_MAP
 for pkg in "${CRITICAL_PKGS[@]}"; do CRIT_MAP["$pkg"]=1; done
@@ -607,17 +627,22 @@ while read -r line; do
         diff_hours=$(( (now - build_time) / 3600 ))
     fi
 
+    is_nuke=0
     is_crit=0
     is_feat=0
+
+    [[ ${NUKE_MAP["$pkgname"]} ]] && is_nuke=1
     [[ ${CRIT_MAP["$pkgname"]} ]] && is_crit=1
     [[ ${FEAT_MAP["$pkgname"]} ]] && is_feat=1
 
-    if (( is_crit )); then
+    if (( is_nuke )); then
         pkg_level=0
-    elif (( is_feat )); then
+    elif (( is_crit )); then
         pkg_level=1
-    else
+    elif (( is_feat )); then
         pkg_level=2
+    else
+        pkg_level=3
     fi
 
     upd_type=$(get_update_type "$old_ver" "$new_ver")
@@ -699,8 +724,10 @@ sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_ty
     out_age="${age_col}${f_age}${reset}"
 
     if (( pkg_level == 0 )); then
-        out_stat="${bg_crit} ! CRIT ${reset}"
+        out_stat="${bg_nuke} ☢ NUKE ${reset}"
     elif (( pkg_level == 1 )); then
+        out_stat="${bg_crit} ! CRIT ${reset}"
+    elif (( pkg_level == 2 )); then
         bg_feat='\033[48;5;214;38;5;0;1m'
         out_stat="${bg_feat} * FEAT ${reset}"
     else
@@ -759,40 +786,62 @@ give_advice() {
     local T_FEAT_H=6
     local T_CRIT_H=12
     local T_DE_H=12
+    local T_NUKE_H=24
 
     local T_MIRROR_SEC=$(( T_MIRROR_H * 3600 ))
     local T_FEAT_SEC=$(( T_FEAT_H * 3600 ))
     local T_CRIT_SEC=$(( T_CRIT_H * 3600 ))
     local T_DE_SEC=$(( T_DE_H * 3600 ))
+    local T_NUKE_SEC=$(( T_NUKE_H * 3600 ))
 
     local fresh_pkg_count=0
-    local fresh_crit_count=0
     local fresh_feat_count=0
     local fresh_de_count=0
+    local fresh_crit_count=0
+    local fresh_nuke_count=0
 
     local min_age_norm_sec=999999999
-    local min_age_crit_sec=999999999
     local min_age_feat_sec=999999999
     local min_age_de_sec=999999999
+    local min_age_crit_sec=999999999
+    local min_age_nuke_sec=999999999
 
     local risky_norm_pkg=""
-    local risky_crit_pkg=""
     local risky_feat_pkg=""
     local risky_de_pkg=""
+    local risky_crit_pkg=""
+    local risky_nuke_pkg=""
 
     local DE_PATTERN="^(plasma-|gnome-|hyprland|kwin|mutter|cinnamon|xfce4|qt[56]-|gtk[34]|kf[56]-|frameworkintegration)"
 
     while IFS=$'\t' read -r _ _ pkg_level _ pkgname _ _ _ _ _ _ date_new _; do
-
         [[ -z "$date_new" ]] && continue
 
-        local pkg_ts
-        pkg_ts=$(date -d "$date_new" +%s 2>/dev/null || echo 0)
-
+        local pkg_ts=$(date -d "$date_new" +%s 2>/dev/null || echo 0)
         (( pkg_ts == 0 )) && continue
 
         local age_sec=$(( now - pkg_ts ))
         (( age_sec < 0 )) && age_sec=0
+
+        if (( pkg_level == 0 )); then
+            if (( age_sec < T_NUKE_SEC )); then
+                ((fresh_nuke_count++))
+                if (( age_sec < min_age_nuke_sec )); then
+                    min_age_nuke_sec=$age_sec
+                    risky_nuke_pkg=$pkgname
+                fi
+            fi
+        fi
+
+        if (( pkg_level == 1 )); then
+            if (( age_sec < T_CRIT_SEC )); then
+                ((fresh_crit_count++))
+                if (( age_sec < min_age_crit_sec )); then
+                    min_age_crit_sec=$age_sec
+                    risky_crit_pkg=$pkgname
+                fi
+            fi
+        fi
 
         if [[ "$pkgname" =~ $DE_PATTERN ]]; then
             if (( age_sec < T_DE_SEC )); then
@@ -804,17 +853,7 @@ give_advice() {
             fi
         fi
 
-        if (( pkg_level == 0 )); then
-            if (( age_sec < T_CRIT_SEC )); then
-                ((fresh_crit_count++))
-                if (( age_sec < min_age_crit_sec )); then
-                    min_age_crit_sec=$age_sec
-                    risky_crit_pkg=$pkgname
-                fi
-            fi
-        fi
-
-        if (( pkg_level == 1 )); then
+        if (( pkg_level == 2 )); then
             if (( age_sec < T_FEAT_SEC )); then
                 ((fresh_feat_count++))
                 if (( age_sec < min_age_feat_sec )); then
@@ -837,21 +876,28 @@ give_advice() {
     echo -e "${dim}---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------${reset}"
 
     local max_wait_sec=0
-    local verdict_level=0 # 0=Safe, 1=Yellow, 2=Red
+    local verdict_level=0 # 0=Safe, 1=Yellow, 2=Red, 3=NUCLEAR
     local reasons=()
 
-    if (( fresh_de_count > 0 )); then
-        local wait=$(( T_DE_SEC - min_age_de_sec ))
+    if (( fresh_nuke_count > 0 )); then
+        local wait=$(( T_NUKE_SEC - min_age_nuke_sec ))
         (( wait > max_wait_sec )) && max_wait_sec=$wait
-        verdict_level=2
-        reasons+=("Major DE update detected (< ${T_DE_H}h). (e.g., $risky_de_pkg)")
+        verdict_level=3
+        reasons+=("${red}${bold}HIGH RISK${dim} System Core updates (< ${T_NUKE_H}h). Wait for stability! (e.g., $risky_nuke_pkg)")
     fi
 
     if (( fresh_crit_count > 0 )); then
         local wait=$(( T_CRIT_SEC - min_age_crit_sec ))
         (( wait > max_wait_sec )) && max_wait_sec=$wait
-        verdict_level=2
-        reasons+=("Fresh Critical/Kernel updates (< ${T_CRIT_H}h). (e.g., $risky_crit_pkg)")
+        (( verdict_level < 2 )) && verdict_level=2
+        reasons+=("Critical updates (< ${T_CRIT_H}h). (e.g., $risky_crit_pkg)")
+    fi
+
+    if (( fresh_de_count > 0 )); then
+        local wait=$(( T_DE_SEC - min_age_de_sec ))
+        (( wait > max_wait_sec )) && max_wait_sec=$wait
+        (( verdict_level < 2 )) && verdict_level=2
+        reasons+=("Major DE update detected (< ${T_DE_H}h). (e.g., $risky_de_pkg)")
     fi
 
     if (( fresh_feat_count > 0 )); then
@@ -865,34 +911,28 @@ give_advice() {
         local wait=$(( T_MIRROR_SEC - min_age_norm_sec ))
         (( wait > max_wait_sec )) && max_wait_sec=$wait
         (( verdict_level < 1 )) && verdict_level=1
-        reasons+=("Mirrors might not be fully synced (< ${T_MIRROR_H}h). (e.g., $risky_norm_pkg)")
+        reasons+=("Mirrors inconsistency risk (< ${T_MIRROR_H}h). (e.g., $risky_norm_pkg)")
     fi
 
     local color=$green
     local verdict="SAFE"
 
-    if (( verdict_level == 1 )); then
-        color=$yellow
-        verdict="REVIEW"
-    elif (( verdict_level == 2 )); then
-        color=$red
-        verdict="HOLD"
-    fi
+    case $verdict_level in
+        1) color=$yellow; verdict="REVIEW" ;;
+        2) color=$red; verdict="HOLD" ;;
+        3) color="${red}${bold}"; verdict="⛔ DANGER" ;;
+    esac
 
     printf "  ${bold}ADVISOR:${reset} "
 
     if (( max_wait_sec == 0 )); then
-        echo -e "${green}${bold}✅  GO FOR IT!${reset} ${dim}(Packages have matured. Mirrors should be consistent.)${reset}"
+        echo -e "${green}${bold}✅  GO FOR IT!${reset} ${dim}(System allows update. Mirrors synced.)${reset}"
     else
         local target_time=$(date -d "@$(( now + max_wait_sec ))" +%H:%M)
-
         local wait_h=$(( max_wait_sec / 3600 ))
         local wait_m=$(( (max_wait_sec % 3600) / 60 ))
-        local dur_str="+"
-        (( wait_h > 0 )) && dur_str+="${wait_h}h "
-        dur_str+="${wait_m}m"
 
-        echo -e "${color}${bold}✋  $verdict${reset} ${white}→ Better update at ${bold}$target_time${reset} ($dur_str)"
+        echo -e "${color}${bold}$verdict${reset} ${white}→ Recommend waiting until ${bold}$target_time${reset} (+${wait_h}h ${wait_m}m)"
 
         if (( ${#reasons[@]} > 0 )); then
              echo -ne "           ${dim}Reason: ${reasons[0]}${reset}"
