@@ -953,10 +953,6 @@ give_advice() {
 give_advice
 
 # --- 8. Update Request ---
-if awk -F'\t' '$5 ~ /^(linux.*|nvidia.*|systemd.*|.*-ucode|cryptsetup|glibc|linux-firmware|mesa|wayland|xorg-server|dbus.*|qt[56]-base|plasma-.*|kwin|egl-wayland)$/' "$OUTPUT_FILE" | grep -q .; then
-    echo -e "  ${red}${bold}⚠  Kernel/Core/DE update detected. Reboot will be required!${reset}"
-fi
-
 if command -v eos-update &> /dev/null; then
     CORE_CMD="eos-update"
 else
