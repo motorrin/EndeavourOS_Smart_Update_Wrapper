@@ -41,15 +41,7 @@ Covered Categories:
 •  Desktop Environments: KDE Plasma, GNOME, XFCE, LXQt, Cinnamon, MATE, COSMIC (Epoch).
 •  Window Managers: Hyprland, Sway, i3, Labwc, Qtile, Niri, Openbox.
 
-# 6. 🔄 Reboot Detector
-
-Uses heuristics to determine if the specific updates usually require a system restart. It scans for updates to:
-•  Core: Kernels, Microcode, Systemd, Glibc, D-Bus, Cryptsetup.
-•  Graphics: NVIDIA drivers, Mesa stack, Wayland/Xorg servers.
-•  DE Frameworks: Qt5/Qt6 base, Plasma workspace, KWin.
-•  Warning: Displays ⚠ Kernel/Core/DE update detected. Reboot will be required! to prevent running the system in an unstable state.
-
-# 7. 🚀 Workflow Integration
+# 6. 🚀 Workflow Integration
 
 •  EndeavourOS Native: Defaults to eos-update for the actual installation process.
 •  Arch Compatible: Falls back to sudo pacman -Syu if EOS tools are missing.
