@@ -588,10 +588,9 @@ if [[ -n "$aur_pkgs" && -n "$AUR_HELPER" ]]; then
         NEW_DATA["$name"]="$rest"
     done < <(LC_ALL=C $AUR_HELPER -Si $aur_pkgs 2>/dev/null | awk -F': ' '
         /^Name/ {n=$2}
-        /^Repository/ {r="AUR"} # Принудительно ставим AUR, иногда там пусто или название репо
-        /^Last Modified/ {b=$2}  # В AUR это дата обновления
+        /^Repository/ {r="AUR"}
+        /^Last Modified/ {b=$2}
         /^Description/ {d=$2; gsub(/[|\t~]/, " ", d)}
-        # Размер в AUR обычно исходники, ставим заглушку, чтобы не ломать таблицу
         /^$/ {if (n) {print n "~|~" r "|" b "|N/A|" d; n=""}}
         END {if (n) print n "~|~" r "|" b "|N/A|" d}
     ')
