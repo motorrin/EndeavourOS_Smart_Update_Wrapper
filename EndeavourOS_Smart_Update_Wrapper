@@ -519,7 +519,7 @@ while (( attempt <= MAX_RETRIES )); do
     fi
 done
 
-log_step "Calculating update list..."
+log_step "Calculating update list (pacman -Qu)..."
 
 sudo chown -R $(id -un):$(id -gn) "$CHECK_DB"
 
@@ -545,15 +545,19 @@ if [[ -z "$updates" ]]; then
     exit 0
 fi
 
-pkg_count=$(echo "$updates" | wc -l)
-aur_count=$(echo "$aur_updates" | grep -c . || echo 0)
+pkg_count=$(echo "$updates" | grep -c . | tr -d '[:space:]')
+if [[ -n "$aur_updates" ]]; then
+    aur_count=$(echo "$aur_updates" | grep -c . | tr -d '[:space:]')
+else
+    aur_count=0
+fi
 
 log_step "Found $pkg_count updates ($aur_count from AUR). Starting detailed analysis..."
 echo -e "${blue}${bold}  󰑮  Analyzing updates: ${white}$pkg_count packages${reset}"
 
 all_pkgs=$(echo "$updates" | awk '{print $1}')
 
-log_step "Fetching remote metadata..."
+log_step "Fetching remote metadata (pacman -Si)..."
 declare -A NEW_DATA
 
 parse_pacman_si() {
