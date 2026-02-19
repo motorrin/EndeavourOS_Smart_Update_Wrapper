@@ -435,6 +435,11 @@ if ! sudo -v; then
     exit 1
 fi
 
+AUR_HELPER=""
+if command -v yay &>/dev/null; then AUR_HELPER="yay"
+elif command -v paru &>/dev/null; then AUR_HELPER="paru"
+fi
+
 echo -e "\n${blue}${bold}  󰚰  Checking for updates...${reset}"
 
 if [[ -f /var/lib/pacman/db.lck ]]; then
@@ -463,8 +468,8 @@ if [[ -f "$MIRROR_LIST" ]]; then
     fi
 fi
 
-log_step "Symlinking local DB..."
-ln -s /var/lib/pacman/local "$CHECK_DB/local" > /dev/null 2>&1
+log_step "Copying local DB..."
+cp -a /var/lib/pacman/local "$CHECK_DB/" > /dev/null 2>&1
 
 sudo chown -R root:root "$CHECK_DB"
 sudo chmod 755 "$CHECK_DB"
@@ -514,8 +519,26 @@ while (( attempt <= MAX_RETRIES )); do
     fi
 done
 
-log_step "Calculating update list (pacman -Qu)..."
-updates=$(LC_ALL=C pacman -Qu --dbpath "$CHECK_DB" --color never)
+log_step "Calculating update list..."
+
+sudo chown -R $(id -un):$(id -gn) "$CHECK_DB"
+
+repo_updates=$(LC_ALL=C pacman -Qu --dbpath "$CHECK_DB" --color never)
+repo_pkgs=$(echo "$repo_updates" | awk '{print $1}')
+
+aur_updates=""
+aur_pkgs=""
+
+if [[ -n "$AUR_HELPER" ]]; then
+    if aur_raw=$($AUR_HELPER -Qua --dbpath "$CHECK_DB" --color never 2>/dev/null); then
+        aur_updates="$aur_raw"
+        aur_pkgs=$(echo "$aur_updates" | awk '{print $1}')
+    fi
+fi
+
+updates="$repo_updates"
+[[ -n "$aur_updates" ]] && updates="$updates"$'\n'"$aur_updates"
+updates=$(echo "$updates" | sed '/^$/d')
 
 if [[ -z "$updates" ]]; then
     echo -e "${green}  ✔ System is fully up to date.${reset}\n"
@@ -523,37 +546,52 @@ if [[ -z "$updates" ]]; then
 fi
 
 pkg_count=$(echo "$updates" | wc -l)
-log_step "Found $pkg_count updates. Starting detailed analysis..."
+aur_count=$(echo "$aur_updates" | grep -c . || echo 0)
+
+log_step "Found $pkg_count updates ($aur_count from AUR). Starting detailed analysis..."
 echo -e "${blue}${bold}  󰑮  Analyzing updates: ${white}$pkg_count packages${reset}"
 
 all_pkgs=$(echo "$updates" | awk '{print $1}')
 
-log_step "Fetching remote metadata (pacman -Si)..."
+log_step "Fetching remote metadata..."
 declare -A NEW_DATA
-while IFS='' read -r line; do
-    name=${line%%~|~*}
-    rest=${line#*~|~}
-    NEW_DATA["$name"]="$rest"
-done < <(LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never $all_pkgs 2>/dev/null | awk -F': ' '
-    /^Name/ {n=$2}
-    /^Repository/ {r=$2}
-    /^Build Date/ {b=$2}
-    /^Download Size/ {s=$2}
-    /^Description/ {
-        d=$2
-        # Description cleanup: replacing |, tab, and ~ with spaces to preserve structure
-        gsub(/[|\t~]/, " ", d)
-    }
-    /^$/ {
-        if (n) {
-            print n "~|~" r "|" b "|" s "|" d
-            n=""
-        }
-    }
-    END {
-        if (n) print n "~|~" r "|" b "|" s "|" d
-    }
-')
+
+parse_pacman_si() {
+    awk -F': ' '
+        /^Name/ {n=$2}
+        /^Repository/ {r=$2}
+        /^Build Date/ {b=$2}
+        /^Download Size/ {s=$2}
+        /^Description/ {d=$2; gsub(/[|\t~]/, " ", d)}
+        /^$/ {if (n) {print n "~|~" r "|" b "|" s "|" d; n=""}}
+        END {if (n) print n "~|~" r "|" b "|" s "|" d}
+    '
+}
+
+if [[ -n "$repo_pkgs" ]]; then
+    while IFS='' read -r line; do
+        name=${line%%~|~*}
+        rest=${line#*~|~}
+        NEW_DATA["$name"]="$rest"
+    done < <(LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never $repo_pkgs 2>/dev/null | parse_pacman_si)
+fi
+
+if [[ -n "$aur_pkgs" && -n "$AUR_HELPER" ]]; then
+    log_step "Fetching AUR metadata..."
+    while IFS='' read -r line; do
+        name=${line%%~|~*}
+        rest=${line#*~|~}
+        NEW_DATA["$name"]="$rest"
+    done < <(LC_ALL=C $AUR_HELPER -Si $aur_pkgs 2>/dev/null | awk -F': ' '
+        /^Name/ {n=$2}
+        /^Repository/ {r="AUR"} # Принудительно ставим AUR, иногда там пусто или название репо
+        /^Last Modified/ {b=$2}  # В AUR это дата обновления
+        /^Description/ {d=$2; gsub(/[|\t~]/, " ", d)}
+        # Размер в AUR обычно исходники, ставим заглушку, чтобы не ломать таблицу
+        /^$/ {if (n) {print n "~|~" r "|" b "|src|" d; n=""}}
+        END {if (n) print n "~|~" r "|" b "|src|" d}
+    ')
+fi
 
 log_step "Fetching local metadata (pacman -Qi)..."
 declare -A OLD_DATA
@@ -566,19 +604,22 @@ done < <(LC_ALL=C pacman -Qi $all_pkgs 2>/dev/null | awk -F': ' '
     /^$/ {if (n) print n "|" b "|" r; n=""}
 ')
 
-total_download_size=$(LC_ALL=C pacman -Si --dbpath "$CHECK_DB" $all_pkgs 2>/dev/null | awk '
-    /^Download Size/ {
-        val=$4
-        unit=$5
-        if (unit == "KiB") val /= 1024
-        else if (unit == "GiB") val *= 1024
-        sum += val
-    }
-    END {
-        if (sum > 1024) printf "%.2f GiB", sum/1024
-        else printf "%.2f MiB", sum
-    }
-')
+total_download_size="0 MiB"
+if [[ -n "$repo_pkgs" ]]; then
+    total_download_size=$(LC_ALL=C pacman -Si --dbpath "$CHECK_DB" $repo_pkgs 2>/dev/null | awk '
+        /^Download Size/ {
+            val=$4
+            unit=$5
+            if (unit == "KiB") val /= 1024
+            else if (unit == "GiB") val *= 1024
+            sum += val
+        }
+        END {
+            if (sum > 1024) printf "%.2f GiB", sum/1024
+            else printf "%.2f MiB", sum
+        }
+    ')
+fi
 
 log_step "Processing data and calculating diffs..."
 
@@ -735,7 +776,11 @@ sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_ty
     fi
 
     printf -v f_repo "%-${w_repo}s" "$repo"
-    out_repo="${dim}${f_repo}${reset}"
+    if [[ "$repo" == "AUR" ]]; then
+        out_repo="${magenta}${f_repo}${reset}"
+    else
+        out_repo="${dim}${f_repo}${reset}"
+    fi
 
     type_col=$(get_type_color "$upd_type")
     printf -v f_type "%-${w_type}s" "$upd_type"
@@ -814,7 +859,9 @@ give_advice() {
 
     local DE_PATTERN="^(plasma-|gnome-|hyprland|kwin|mutter|cinnamon|xfce4|qt[56]-|gtk[34]|kf[56]-|frameworkintegration)"
 
-    while IFS=$'\t' read -r _ _ pkg_level _ pkgname _ _ _ _ _ _ date_new _; do
+    while IFS=$'\t' read -r _ _ pkg_level _ pkgname _ _ repo _ _ _ date_new _; do
+        [[ "$repo" == "AUR" ]] && continue
+
         [[ -z "$date_new" ]] && continue
 
         local pkg_ts=$(date -d "$date_new" +%s 2>/dev/null || echo 0)
@@ -955,6 +1002,8 @@ give_advice
 # --- 8. Update Request ---
 if command -v eos-update &> /dev/null; then
     CORE_CMD="eos-update"
+elif [[ -n "$AUR_HELPER" ]]; then
+    CORE_CMD="$AUR_HELPER -Syu"
 else
     CORE_CMD="sudo pacman -Syu"
 fi
