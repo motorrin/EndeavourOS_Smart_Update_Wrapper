@@ -1,21 +1,37 @@
 #!/bin/bash
 
-# --- 1. Color Palette ---
-reset='\033[0m'
-bold='\033[1m'
-dim='\033[2m'
-red='\033[38;5;196m'
-green='\033[38;5;71m'
-yellow='\033[38;5;214m'
-blue='\033[38;5;75m'
-magenta='\033[38;5;176m'
-cyan='\033[38;5;79m'
-white='\033[38;5;255m'
-gray='\033[38;5;244m'
+# --- 1.1 Color Palette ---
+if [ -t 1 ]; then
+    reset='\033[0m'
+    bold='\033[1m'
+    dim='\033[2m'
+    red='\033[38;5;196m'
+    green='\033[38;5;71m'
+    yellow='\033[38;5;214m'
+    blue='\033[38;5;75m'
+    magenta='\033[38;5;176m'
+    cyan='\033[38;5;79m'
+    white='\033[38;5;255m'
+    gray='\033[38;5;244m'
+    bg_crit='\033[48;5;160;38;5;255;1m'
+    bg_core='\033[48;5;237;38;5;214;1m'
+    bg_nuke='\033[48;5;196;38;5;255;1m'
+    bg_feat='\033[48;5;214;38;5;0;1m'
+else
+    reset='' bold='' dim='' red='' green='' yellow='' blue=''
+    magenta='' cyan='' white='' gray='' bg_crit='' bg_core='' bg_nuke='' bg_feat=''
+fi
 
-bg_crit='\033[48;5;160;38;5;255;1m' # Red background
-bg_core='\033[48;5;237;38;5;214;1m' # Dark gray background
-bg_nuke='\033[48;5;196;38;5;255;1m' # Bright Red background
+# --- 1.2 Dependency Check ---
+for cmd in python3 tar awk stat fuser; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo -e "${red}Error: Required command '$cmd' is not installed.${reset}"
+        if [[ "$cmd" == "fuser" ]]; then
+            echo -e "${gray}Please install the 'psmisc' package: sudo pacman -S psmisc${reset}"
+        fi
+        exit 1
+    fi
+done
 
 # --- 2.1 Nuclear Package Configuration ---
 NUCLEAR_PKGS=(
@@ -248,7 +264,16 @@ fi
 
 cleanup() {
     if [[ -n "$CHECK_DB" && -d "$CHECK_DB" && "$CHECK_DB" == /tmp/* && "$CHECK_DB" != "/tmp/" ]]; then
-        sudo rm -rf "$CHECK_DB"
+        rm -rf "$CHECK_DB" 2>/dev/null
+
+        if [[ -d "$CHECK_DB" ]]; then
+            sudo -n rm -rf "$CHECK_DB" 2>/dev/null
+
+            if [[ -d "$CHECK_DB" ]]; then
+                echo -e "\n\r\033[2K${yellow}⚠ Cleaning up temporary RAM files (/tmp)... Password required.${reset}"
+                sudo rm -rf "$CHECK_DB"
+            fi
+        fi
     fi
 
     local files_to_remove=()
@@ -290,10 +315,10 @@ get_update_type() {
 
         [[ -z "$n_old" ]] && { echo "MINOR"; return; }
 
-        if (( 10#$n_old != 10#$n_new )); then
+        if (( 10#${n_old:-0} != 10#${n_new:-0} )); then
 
-            if (( (10#$n_new >= 2020 && 10#$n_new <= 2100) || \
-                  (10#$n_new >= 20200000 && 10#$n_new <= 21001231) )); then
+            if (( (10#${n_new:-0} >= 2020 && 10#${n_new:-0} <= 2100) || \
+                  (10#${n_new:-0} >= 20200000 && 10#${n_new:-0} <= 21001231) )); then
                 echo "CALVER"
                 return
             fi
@@ -323,28 +348,19 @@ get_type_color() {
 }
 
 check_arch_news() {
-    log_step "Starting Arch News check (Python XML)..."
+    log_step "Starting Arch News check (Python)..."
     echo -ne "${gray}  Checking Arch News... ${reset}"
 
-    if news_ts=$(curl -sf --connect-timeout 2 --max-time 3 https://archlinux.org/feeds/news/ | python3 -c "
-import sys
-import xml.etree.ElementTree as ET
-import email.utils
-
+    if news_ts=$(python3 -c "
+import sys, urllib.request, xml.etree.ElementTree as ET, email.utils
 try:
-    # Reading stdin
-    root = ET.fromstring(sys.stdin.read())
-
-    # Looking for the first <item> element inside <channel>
+    req = urllib.request.urlopen('https://archlinux.org/feeds/news/', timeout=3)
+    root = ET.fromstring(req.read())
     item = root.find('./channel/item')
-
     if item is not None:
         pubDate = item.find('pubDate').text
-        # Parsing an RFC 822 date into a time tuple
         parsed = email.utils.parsedate_tz(pubDate)
-        # Convert to timestamp (seconds)
-        timestamp = email.utils.mktime_tz(parsed)
-        print(int(timestamp))
+        print(int(email.utils.mktime_tz(parsed)))
     else:
         sys.exit(1)
 except Exception:
@@ -665,10 +681,16 @@ while read -r line; do
     (( ${#repo} > max_repo )) && max_repo=${#repo}
     (( ${#size} > max_size )) && max_size=${#size}
 
+    epoch_new=0
+    fmt_date_new=""
     diff_hours=9999
-    if [[ -n "$date_new" ]]; then
-        build_time=$(date -d "$date_new" +%s 2>/dev/null || echo 0)
-        diff_hours=$(( (now - build_time) / 3600 ))
+    if [[ -n "$date_new" && "$date_new" != "N/A" ]]; then
+        parsed_dates=$(LC_TIME=C date -d "$date_new" +'epoch_new=%s; fmt_date_new="%d %b %H:%M"' 2>/dev/null)
+        [[ -n "$parsed_dates" ]] && eval "$parsed_dates"
+
+        if (( epoch_new > 0 )); then
+            diff_hours=$(( (now - epoch_new) / 3600 ))
+        fi
     fi
 
     is_nuke=0
@@ -695,7 +717,7 @@ while read -r line; do
 
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "$sort_key" "$diff_hours" "$pkg_level" "$upd_type" "$pkgname" "$old_ver" "$new_ver" \
-        "$repo" "$size" "$is_explicit" "$date_old" "$date_new" "$desc" >> "$OUTPUT_FILE"
+        "$repo" "$size" "$is_explicit" "$epoch_new" "$fmt_date_new" "$desc" >> "$OUTPUT_FILE"
 
 done <<< "$updates"
 
@@ -712,7 +734,7 @@ w_new=$(( max_new ))
 w_size=$(( max_size ))
 w_date=12
 
-term_cols=$(tput cols)
+term_cols=$(tput cols 2>/dev/null || echo 120)
 used_width=$(( w_age + 1 + w_stat + 1 + w_repo + 1 + w_type + 1 + w_name + 1 + w_old + 3 + w_new + 1 + w_size + 1 + w_date + 1 ))
 w_desc=$(( term_cols - used_width - 1 ))
 
@@ -755,7 +777,7 @@ printf "${bold}${gray}%s %s %s %s %s %s   %s %s %s %s${reset}\n" \
 
 printf "${dim}%s${reset}\n" "$sep_line"
 
-sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_type pkgname old_ver new_ver repo size is_explicit date_old date_new desc; do
+sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_type pkgname old_ver new_ver repo size is_explicit epoch_new fmt_date_new desc; do
 
     if (( diff_hours == 9999 )); then age_disp="[?]"; age_col=$dim
     else
@@ -772,7 +794,6 @@ sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_ty
     elif (( pkg_level == 1 )); then
         out_stat="${bg_crit} ! CRIT ${reset}"
     elif (( pkg_level == 2 )); then
-        bg_feat='\033[48;5;214;38;5;0;1m'
         out_stat="${bg_feat} * FEAT ${reset}"
     else
         out_stat="$(printf "%-${w_stat}s" " ")"
@@ -797,12 +818,7 @@ sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_ty
     printf -v f_name "%-${w_name}s" "$pkgname"
     out_name="${name_col}${f_name}${reset}"
 
-    if [[ -n "$date_new" ]]; then
-        f_date_raw=$(LC_TIME=C date -d "$date_new" "+%d %b %H:%M" 2>/dev/null)
-    else
-        f_date_raw=""
-    fi
-    printf -v f_date_padded "%-${w_date}s" "$f_date_raw"
+    printf -v f_date_padded "%-${w_date}s" "$fmt_date_new"
     out_date_new="${dim}${f_date_padded}${reset}"
 
     printf -v f_size "%${w_size}s" "$size"
@@ -862,12 +878,10 @@ give_advice() {
 
     local DE_PATTERN="^(plasma-|gnome-|hyprland|kwin|mutter|cinnamon|xfce4|qt[56]-|gtk[34]|kf[56]-|frameworkintegration)"
 
-    while IFS=$'\t' read -r _ _ pkg_level _ pkgname _ _ repo _ _ _ date_new _; do
+    while IFS=$'\t' read -r _ _ pkg_level _ pkgname _ _ repo _ _ epoch_new _ _; do
         [[ "$repo" == "AUR" ]] && continue
 
-        [[ -z "$date_new" ]] && continue
-
-        local pkg_ts=$(date -d "$date_new" +%s 2>/dev/null || echo 0)
+        local pkg_ts=$epoch_new
         (( pkg_ts == 0 )) && continue
 
         local age_sec=$(( now - pkg_ts ))
