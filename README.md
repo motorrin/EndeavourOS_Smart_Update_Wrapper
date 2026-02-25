@@ -57,7 +57,7 @@ Covered Categories:
 •  (Optional) eos-update (EndeavourOS utils)
 •  (Optional) topgrade
 
-# 🛠️ Installation & Setup
+# 🛠️ Setup
 
 # 1. Create the script file and paste the code
 nano ~/EndeavourOS_Smart_Update_Wrapper
