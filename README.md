@@ -49,7 +49,6 @@ Covered Categories:
 •  Backup: Automatically creates a backup of the pacman local database before applying updates.
 
 # 📦 Requirements
-•  bash
 •  pacman
 •  curl
 •  awk
