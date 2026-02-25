@@ -452,8 +452,8 @@ if ! sudo -v; then
 fi
 
 AUR_HELPER=""
-if command -v yay &>/dev/null; then AUR_HELPER="yay"
-elif command -v paru &>/dev/null; then AUR_HELPER="paru"
+if command -v paru &>/dev/null; then AUR_HELPER="paru"
+elif command -v yay &>/dev/null; then AUR_HELPER="yay"
 fi
 
 echo -e "\n${blue}${bold}  󰚰  Checking for updates...${reset}"
