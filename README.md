@@ -66,17 +66,27 @@ nano ~/EndeavourOS_Smart_Update_Wrapper
 # 2. Make the script executable
 chmod +x ~/EndeavourOS_Smart_Update_Wrapper
 
-# 3. Make sure that your system uses bash:
+# 3. Check if you are using bash or zsh::
 echo $0
 
-# 4. Open the bash configuration file:
+# 4. Open the bash/zsh configuration file:
+
+# for bash:
 nano ~/.bashrc
+
+# for zsh:
+nano ~/.zshrc
 
 # 5. Add the following alias to the end of the file:
 alias up="~/EndeavourOS_Smart_Update_Wrapper"
 
 # 6. Apply the changes immediately:
+
+# for bash:
 source ~/.bashrc
+
+# for zsh:
+source ~/.zshrc
 
 # 7. Run the script using the new alias:
 up
