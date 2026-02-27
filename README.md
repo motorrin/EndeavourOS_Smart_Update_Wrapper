@@ -1,12 +1,12 @@
-# 🛡️ Smart Update Manager for Arch Linux & EndeavourOS
+# 🛡️ Smart Update Wrapper for EndeavourOS & Arch Linux
 
 ![Bash](https://img.shields.io/badge/Language-Bash-4EAA25?style=for-the-badge&logo=gnu-bash)
 ![OS](https://img.shields.io/badge/OS-Arch_Linux_%7C_EndeavourOS-1793D1?style=for-the-badge&logo=arch-linux)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
 
-An advanced, safe, and visually appealing bash script for managing system updates on **Arch Linux** and **EndeavourOS**. 
+An advanced, safe, and visually appealing bash script for managing system updates on **EndeavourOS** and **Arch Linux**.
 
-Instead of blindly running `pacman -Syu`, this script analyzes pending updates, checks official news, creates backups, and utilizes a **Smart Delay Advisor** to protect your system from Day-1 bugs, kernel panics, and broken packages.
+Instead of blindly running `pacman -Syu`, this script analyzes pending updates, checks official news, creates backups, and utilizes an **Advisor** to protect your system from Day-1 bugs, kernel panics, and broken packages.
 
 ---
 
