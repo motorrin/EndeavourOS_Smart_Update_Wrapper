@@ -539,18 +539,39 @@ log_step "Calculating update list (pacman -Qu)..."
 
 sudo chown -R $(id -un):$(id -gn) "$CHECK_DB"
 
+ignored_pkgs=$(pacman-conf IgnorePkg 2>/dev/null | tr ' ' '\n')
+ignored_groups=$(pacman-conf IgnoreGroup 2>/dev/null | tr ' ' '\n')
+
+if [[ -n "$ignored_groups" ]]; then
+    group_pkgs=$(pacman -Sgq $ignored_groups 2>/dev/null)
+    ignored_pkgs="$ignored_pkgs"$'\n'"$group_pkgs"
+fi
+
+ignored_pkgs=$(echo "$ignored_pkgs" | sed '/^$/d' | sort -u)
+
 repo_updates=$(LC_ALL=C pacman -Qu --dbpath "$CHECK_DB" --color never)
-repo_pkgs=$(echo "$repo_updates" | awk '{print $1}')
 
 aur_updates=""
-aur_pkgs=""
-
 if [[ -n "$AUR_HELPER" ]]; then
     if aur_raw=$($AUR_HELPER -Qua --dbpath "$CHECK_DB" --color never 2>/dev/null); then
         aur_updates="$aur_raw"
-        aur_pkgs=$(echo "$aur_updates" | awk '{print $1}')
     fi
 fi
+
+if [[ -n "$ignored_pkgs" ]]; then
+    filter_awk='
+        BEGIN { split(ig, a, "\n"); for (i in a) if(a[i] != "") ign[a[i]]=1 }
+        { if (!ign[$1]) print $0 }
+    '
+    [[ -n "$repo_updates" ]] && repo_updates=$(echo "$repo_updates" | awk -v ig="$ignored_pkgs" "$filter_awk")
+    [[ -n "$aur_updates" ]]  && aur_updates=$(echo "$aur_updates" | awk -v ig="$ignored_pkgs" "$filter_awk")
+fi
+
+repo_pkgs=""
+aur_pkgs=""
+
+[[ -n "$repo_updates" ]] && repo_pkgs=$(echo "$repo_updates" | awk '{print $1}')
+[[ -n "$aur_updates" ]] && aur_pkgs=$(echo "$aur_updates" | awk '{print $1}')
 
 updates="$repo_updates"
 [[ -n "$aur_updates" ]] && updates="$updates"$'\n'"$aur_updates"
