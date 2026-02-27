@@ -558,7 +558,16 @@ if [[ -n "$AUR_HELPER" ]]; then
     fi
 fi
 
+ignored_updates=""
 if [[ -n "$ignored_pkgs" ]]; then
+    extract_ignored_awk='
+        BEGIN { split(ig, a, "\n"); for (i in a) if(a[i] != "") ign[a[i]]=1 }
+        { if (ign[$1]) print $0 }
+    '
+    all_raw_updates="$repo_updates"
+    [[ -n "$aur_updates" ]] && all_raw_updates="$all_raw_updates"$'\n'"$aur_updates"
+    ignored_updates=$(printf "%s\n" "$all_raw_updates" | awk -v ig="$ignored_pkgs" "$extract_ignored_awk" | sed '/^$/d')
+
     filter_awk='
         BEGIN { split(ig, a, "\n"); for (i in a) if(a[i] != "") ign[a[i]]=1 }
         { if (!ign[$1]) print $0 }
@@ -575,11 +584,42 @@ aur_pkgs=""
 
 updates="$repo_updates"
 [[ -n "$aur_updates" ]] && updates="$updates"$'\n'"$aur_updates"
-updates=$(echo "$updates" | sed '/^$/d')
+updates=$(printf "%s\n" "$updates" | sed '/^$/d')
 
 if [[ -z "$updates" ]]; then
     echo -e "${green}  ✔ System is fully up to date.${reset}\n"
+
+    if [[ -n "$ignored_updates" ]]; then
+        echo -e "  ${magenta}${bold}󰏖 Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
+        while read -r pkg old_ver _ new_ver rest; do
+            echo -e "    ${dim}- ${pkg}: ${gray}${old_ver}${reset} ${blue}→${reset} ${white}${new_ver}${reset}"
+        done <<< "$ignored_updates"
+        echo ""
+    fi
     exit 0
+fi
+
+dependency_warnings=""
+sim_error_warning=""
+
+if [[ -n "$ignored_updates" ]]; then
+    log_step "Checking for dependency conflicts with ignored packages..."
+
+    sim_out=$(LC_ALL=C pacman -Sup --dbpath "$CHECK_DB" --print-format "%n" --noconfirm 2>&1)
+    sim_exit=$?
+
+    if [[ $sim_exit -ne 0 ]]; then
+        if echo "$sim_out" | grep -qE "could not satisfy dependencies|conflicting dependencies|unresolvable package conflicts"; then
+            dependency_warnings=$(echo "$sim_out" | awk '/could not satisfy dependencies|conflicting dependencies|unresolvable package conflicts/{flag=1; next} flag {print "    " $0}')
+
+            if [[ -z "$dependency_warnings" ]]; then
+                dependency_warnings=$(echo "$sim_out" | awk '/error:/ {flag=1} flag {print "    " $0}')
+                [[ -z "$dependency_warnings" ]] && dependency_warnings=$(echo "$sim_out" | sed 's/^/    /')
+            fi
+        else
+            sim_error_warning="    ${yellow}⚠ The update simulation failed due to a transaction error.${reset}\n${dim}$(echo "$sim_out" | sed 's/^/      /')${reset}"
+        fi
+    fi
 fi
 
 pkg_count=$(grep -c . <<< "$updates")
@@ -1031,6 +1071,24 @@ give_advice() {
 }
 
 give_advice
+
+if [[ -n "$ignored_updates" ]]; then
+    echo -e "\n  ${magenta}${bold}󰏖 Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
+    while read -r pkg old_ver _ new_ver rest; do
+        echo -e "    ${dim}- ${pkg}: ${gray}${old_ver}${reset} ${blue}→${reset} ${white}${new_ver}${reset}"
+    done <<< "$ignored_updates"
+
+    if [[ -n "$dependency_warnings" ]]; then
+        echo -e "\n  ${bg_nuke}${white}${bold} ⚠ DEPENDENCY BREAKAGE DETECTED ⚠ ${reset}"
+        echo -e "  ${red}Updating now will likely abort because of unresolved dependencies!${reset}"
+        echo -e "  ${gray}Pacman reports the following conflicts:${reset}"
+        echo -e "${red}${dependency_warnings}${reset}\n"
+    elif [[ -n "$sim_error_warning" ]]; then
+        echo -e "\n${sim_error_warning}\n"
+    else
+        echo -e "\n    ${green}✔ No dependency conflicts detected from skipped packages ${dim}(Official repos only)${green}.${reset}"
+    fi
+fi
 
 # --- 8. Update Request ---
 HAS_EOS=false
