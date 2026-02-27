@@ -1,3 +1,6 @@
+![01](https://github.com/user-attachments/assets/9aab8143-8587-4c49-b822-915f9a1d950e)
+![02](https://github.com/user-attachments/assets/bed32c77-38d2-4a8f-a017-35fc3099d786)
+
 # 🛡️ EndeavourOS Smart Update Wrapper
 
 A robust Bash script designed to make EndeavourOS (and Arch Linux) updates safer, more informative, and visually distinct. It analyzes pending updates before installation, highlights an extensive list of critical system components and Desktop Environments, and checks for official Arch Linux news.
