@@ -7,7 +7,7 @@
 
 </div>
 
-**Arch_Smart_Update** is an advanced, ultra-safe, and visually stunning bash script for managing system updates on Arch Linux and its derivatives (currently only EndeavourOS). It acts as an intelligent shield for your package manager: analyzing pending updates, checking official news, automating backups, and utilizing a built-in **Advisor** to protect your machine from Day-1 bugs, broken dependencies, and kernel panics.
+**Arch_Smart_Update** is an advanced, ultra-safe, and visually stunning bash script for managing system updates on Arch Linux and its derivatives. It acts as an intelligent shield for your package manager: analyzing pending updates, checking official news, automating backups, and utilizing a built-in **Advisor** to protect your machine from Day-1 bugs, broken dependencies, and kernel panics.
 
 ---
 
