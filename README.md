@@ -51,35 +51,49 @@ The script relies on standard system utilities, but make sure you have the follo
 
 `sudo pacman -S python bash tar gawk coreutils psmisc`
 
-## 🛠️ Setup
+## 🛠️ Installation
 
-**1. Create the script file and paste the code:**  
-`nano ~/EndeavourOS_Smart_Update_Wrapper`  
+## Option 1: Install from AUR (Recommended)
+The script is officially available in the Arch User Repository. You can install it using your favorite AUR helper:
 
-**2. Make the script executable:**  
-`chmod +x ~/EndeavourOS_Smart_Update_Wrapper`  
+For yay:  
+`yay -S eos-smart-update`  
+For paru:  
+`paru -S eos-smart-update`
 
-**3. Check if you are using bash or zsh:**  
-`echo $0`  
+## Option 2: Manual Installation
+If you prefer not to use the AUR, you can install the script manually:
 
-**4. Open the bash/zsh configuration file:**  
+`curl -O https://raw.githubusercontent.com/motorrin/EndeavourOS_Smart_Update_Wrapper/main/EndeavourOS_Smart_Update_Wrapper`  
+`chmod +x EndeavourOS_Smart_Update_Wrapper`  
+`mv EndeavourOS_Smart_Update_Wrapper ~/eos-smart-update`  
 
-**for bash:**  
+
+## ❓ How do I use this script?
+If you installed via AUR, the command is globally available as:  
+`eos-smart-update`  
+If you installed Manually, the command is:  
+`~/eos-smart-update`
+
+## Why write so many letters? Create an alias!
+
+### 1. Check if you're using bash or zsh:
+`echo $0`
+
+### 2. Open your configuration file:
+For bash:  
 `nano ~/.bashrc`  
+For zsh:  
+`nano ~/.zshrc`
 
-**for zsh:**  
-`nano ~/.zshrc`  
+### 3. Add the alias to the very end of the file:
+If you installed via AUR:  
+`alias up="~/eos-smart-update"`  
+If you installed Manually:  
+`alias up="~/eos-smart-update"`
 
-**5. Add the following alias to the end of the file:**  
-`alias up="~/EndeavourOS_Smart_Update_Wrapper"`  
-
-**6. Apply the changes immediately:**  
-
-**for bash:**  
+### 4. Apply the changes immediately:
+For bash:  
 `source ~/.bashrc`  
-
-**for zsh:**  
-`source ~/.zshrc`  
-
-**7. Run the script using the new alias:**  
-`up`  
+For zsh:  
+`source ~/.zshrc`
