@@ -7,7 +7,7 @@
 
 </div>
 
-**Smart Update Wrapper** is an advanced, ultra-safe, and visually stunning bash script for managing system updates on EndeavourOS and Arch Linux. It acts as an intelligent shield for your package manager: analyzing pending updates, checking official news, automating backups, and utilizing a built-in **Advisor** to protect your machine from Day-1 bugs, broken dependencies, and kernel panics.
+**Arch_Smart_Update** is an advanced, ultra-safe, and visually stunning bash script for managing system updates on Arch Linux and its derivatives (currently only EndeavourOS). It acts as an intelligent shield for your package manager: analyzing pending updates, checking official news, automating backups, and utilizing a built-in **Advisor** to protect your machine from Day-1 bugs, broken dependencies, and kernel panics.
 
 ---
 
@@ -57,23 +57,23 @@ The script relies on standard system utilities, but make sure you have the follo
 The script is officially available in the Arch User Repository. You can install it using your favorite AUR helper:
 
 For yay:  
-`yay -S eos-smart-update`  
+`yay -S arch-smart-update`  
 For paru:  
-`paru -S eos-smart-update`
+`paru -S arch-smart-update`
 
 ## Option 2: Manual Installation
 If you prefer not to use the AUR, you can install the script manually:
 
-`curl -O https://raw.githubusercontent.com/motorrin/EndeavourOS_Smart_Update_Wrapper/main/EndeavourOS_Smart_Update_Wrapper`  
-`chmod +x EndeavourOS_Smart_Update_Wrapper`  
-`mv EndeavourOS_Smart_Update_Wrapper ~/eos-smart-update`  
+`curl -O https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/arch-smart-update`  
+`chmod +x arch-smart-update`  
+`mv arch-smart-update ~/arch-smart-update`  
 
 
 ## ❓ How do I use this script?
 If you installed via AUR, the command is globally available as:  
-`eos-smart-update`  
+`arch-smart-update`  
 If you installed Manually, the command is:  
-`~/eos-smart-update`
+`~/arch-smart-update`
 
 ## Why write so many letters? Create an alias!
 
@@ -88,9 +88,9 @@ For zsh:
 
 ### 3. Add the alias to the very end of the file:
 If you installed via AUR:  
-`alias up="~/eos-smart-update"`  
+`alias up="arch-smart-update"`  
 If you installed Manually:  
-`alias up="~/eos-smart-update"`
+`alias up="~/arch-smart-update"`
 
 ### 4. Apply the changes immediately:
 For bash:  
