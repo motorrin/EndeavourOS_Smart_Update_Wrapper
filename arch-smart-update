@@ -50,6 +50,9 @@ USER_PKG_CONF="$CONFIG_DIR/user_packages.conf"
 CMD_CONF="$CONFIG_DIR/custom_commands.conf"
 REFL_CONF="$CONFIG_DIR/reflector.conf"
 
+SETTINGS_DEFAULT="$CONFIG_DIR/other_settings.default.conf"
+SETTINGS_CONF="$CONFIG_DIR/other_settings.conf"
+
 update_from_github() {
     local file_path="$1"
     local url="$2"
@@ -85,6 +88,7 @@ echo -e "${dim}  Checking for configuration updates...${reset}"
 update_from_github "$PKG_CONF" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/packages.conf" "NUCLEAR_PKGS"
 update_from_github "$CMD_DEFAULT" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/custom_commands.conf" "custom commands configuration"
 update_from_github "$REFL_DEFAULT" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/reflector.conf" "Reflector settings"
+update_from_github "$SETTINGS_DEFAULT" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/other_settings.conf" "PROMPT_MIRROR_REFRESH"
 
 if [[ ! -f "$CMD_CONF" && -f "$CMD_DEFAULT" ]]; then
     cp "$CMD_DEFAULT" "$CMD_CONF"
@@ -94,6 +98,11 @@ fi
 if [[ ! -f "$REFL_CONF" && -f "$REFL_DEFAULT" ]]; then
     cp "$REFL_DEFAULT" "$REFL_CONF"
     echo -e "${dim}  Created default $REFL_CONF${reset}"
+fi
+
+if [[ ! -f "$SETTINGS_CONF" && -f "$SETTINGS_DEFAULT" ]]; then
+    cp "$SETTINGS_DEFAULT" "$SETTINGS_CONF"
+    echo -e "${dim}  Created default $SETTINGS_CONF${reset}"
 fi
 
 if [[ ! -f "$USER_PKG_CONF" ]]; then
@@ -123,6 +132,14 @@ fi
 
 if [[ -f "$USER_PKG_CONF" ]]; then
     source "$USER_PKG_CONF"
+fi
+
+if [[ -f "$SETTINGS_CONF" ]]; then
+    source "$SETTINGS_CONF"
+    if ! grep -q "AUR_HELPER_OVERRIDE=" "$SETTINGS_CONF"; then
+        echo -e "\n# Override the default AUR helper (e.g. \"yay\", \"pikaur\"). Leave empty to auto-detect." >> "$SETTINGS_CONF"
+        echo "AUR_HELPER_OVERRIDE=\"\"" >> "$SETTINGS_CONF"
+    fi
 fi
 
 declare -A NUKE_MAP
@@ -263,7 +280,7 @@ except Exception:
 
 backup_pacman_db() {
     local BACKUP_DIR="/var/lib/pacman/backup"
-    local KEEP_COPIES=5
+    local KEEP_COPIES=${MAX_BACKUP_COPIES:-5}
 
     log_step "Creating Pacman DB backup..."
 
@@ -360,7 +377,16 @@ if ! sudo -v; then
 fi
 
 AUR_HELPER=""
-if command -v paru &>/dev/null; then AUR_HELPER="paru"
+if [[ -n "${AUR_HELPER_OVERRIDE:-}" ]]; then
+    if command -v "$AUR_HELPER_OVERRIDE" &>/dev/null; then
+        AUR_HELPER="$AUR_HELPER_OVERRIDE"
+    else
+        echo -e "${yellow}  ⚠ Warning: Override AUR helper '$AUR_HELPER_OVERRIDE' not found. Falling back to auto-detect.${reset}"
+        if command -v paru &>/dev/null; then AUR_HELPER="paru"
+        elif command -v yay &>/dev/null; then AUR_HELPER="yay"
+        fi
+    fi
+elif command -v paru &>/dev/null; then AUR_HELPER="paru"
 elif command -v yay &>/dev/null; then AUR_HELPER="yay"
 fi
 
@@ -381,6 +407,8 @@ fi
 check_arch_news
 
 MIRROR_LIST="/etc/pacman.d/mirrorlist"
+did_prompt_mirrors=false
+
 if [[ -f "$MIRROR_LIST" ]]; then
     now_ts=$(date +%s)
     file_ts=$(stat -c %Y "$MIRROR_LIST" 2>/dev/null || echo "$now_ts")
@@ -389,7 +417,12 @@ if [[ -f "$MIRROR_LIST" ]]; then
 
     if (( mirror_age_days >= 7 )); then
         refresh_mirrors "Mirrors are old (${mirror_age_days} days)."
+        did_prompt_mirrors=true
     fi
+fi
+
+if [[ "$did_prompt_mirrors" == false ]] && [[ "${PROMPT_MIRROR_REFRESH,,}" == "true" ]]; then
+    refresh_mirrors "Pre-update mirror refresh is enabled in other_settings.conf."
 fi
 
 log_step "Copying local DB..."
@@ -1055,6 +1088,7 @@ echo -ne "\n  ${bold}${white}Apply updates?${reset} ${dim}(${PROMPT_CMD})${reset
 read -r answer
 
 if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
+    sudo -v
     echo -e "\n"
     backup_pacman_db
     UPDATE_SUCCESS=false
