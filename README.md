@@ -62,6 +62,10 @@ To ensure your personal settings are never overwritten by script updates, the co
 - `user_packages.conf` — Add your own packages to the threat levels here. For example: `CRITICAL_PKGS+=("my-important-app")`.
 - `custom_commands.conf` — Define custom update commands (e.g., `flatpak update -y`). If populated, the script will run these *instead* of standard pacman/topgrade utilities.
 - `reflector.conf` — Your custom `reflector` command for generating mirrorlists.
+- `other_settings.conf` — General script behavior settings. Here you can configure:
+  > `PROMPT_MIRROR_REFRESH` (Set to `true` to always ask for a mirror refresh before checking updates).
+  > `MAX_BACKUP_COPIES` (Adjust how many Pacman DB `.tar.gz` backups are kept, default is 5).
+  > `AUR_HELPER_OVERRIDE` (Force the script to use a specific AUR helper like `pikaur` or `paru` instead of auto-detecting).
 
 Whenever the master configuration on GitHub is updated, the script will quietly pull the changes without touching your custom files!
 
