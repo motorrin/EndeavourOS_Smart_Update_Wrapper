@@ -125,17 +125,23 @@ CRITICAL_PKGS=("base" "base-devel" "mesa" "wayland" "xorg-server" "dbus")
 FEATURE_PKGS=("pipewire" "plasma-desktop" "gnome-shell" "hyprland" "networkmanager")
 
 if [[ -f "$PKG_CONF" ]]; then
-    source "$PKG_CONF"
+    NUCLEAR_PKGS=($(grep -oP 'NUCLEAR_PKGS=\(\K.*?(?=\))' "$PKG_CONF" | tr -d "\"'"))
+    CRITICAL_PKGS=($(grep -oP 'CRITICAL_PKGS=\(\K.*?(?=\))' "$PKG_CONF" | tr -d "\"'"))
+    FEATURE_PKGS=($(grep -oP 'FEATURE_PKGS=\(\K.*?(?=\))' "$PKG_CONF" | tr -d "\"'"))
 else
     echo -e "${red}  ⚠ Could not load packages.conf. Using built-in basic fallbacks.${reset}"
 fi
 
 if [[ -f "$USER_PKG_CONF" ]]; then
-    source "$USER_PKG_CONF"
+    NUCLEAR_PKGS+=($(grep -oP 'NUCLEAR_PKGS\+=\(\K.*?(?=\))' "$USER_PKG_CONF" | tr -d "\"'"))
+    CRITICAL_PKGS+=($(grep -oP 'CRITICAL_PKGS\+=\(\K.*?(?=\))' "$USER_PKG_CONF" | tr -d "\"'"))
+    FEATURE_PKGS+=($(grep -oP 'FEATURE_PKGS\+=\(\K.*?(?=\))' "$USER_PKG_CONF" | tr -d "\"'"))
 fi
 
 if [[ -f "$SETTINGS_CONF" ]]; then
-    source "$SETTINGS_CONF"
+    AUR_HELPER_OVERRIDE=$(grep -oP '^AUR_HELPER_OVERRIDE=\K.*' "$SETTINGS_CONF" | tr -d "\"'")
+    PROMPT_MIRROR_REFRESH=$(grep -oP '^PROMPT_MIRROR_REFRESH=\K.*' "$SETTINGS_CONF" | tr -d "\"'")
+
     if ! grep -q "AUR_HELPER_OVERRIDE=" "$SETTINGS_CONF"; then
         echo -e "\n# Override the default AUR helper (e.g. \"yay\", \"pikaur\"). Leave empty to auto-detect." >> "$SETTINGS_CONF"
         echo "AUR_HELPER_OVERRIDE=\"\"" >> "$SETTINGS_CONF"
@@ -196,6 +202,11 @@ get_update_type() {
 
     local v_old=${old#*:}
     local v_new=${new#*:}
+
+    if [[ "$v_new" == "latest-commit" ]]; then
+        echo "MINOR"
+        return
+    fi
 
     if [[ "$old" == *":"* || "$new" == *":"* ]]; then
         local e_old=${old%%:*}
@@ -721,7 +732,7 @@ done <<< "$updates"
 echo -e "\n"
 
 # --- 7. Table Output ---
-w_age=6
+w_age=8
 w_stat=8
 w_repo=$(( max_repo ))
 w_type=6
@@ -760,11 +771,12 @@ h_age=$(fmt_center "AGE" "$w_age")
 h_stat=$(fmt_center "STATUS" "$w_stat")
 h_repo=$(fmt_center "REPO" "$w_repo")
 h_type=$(fmt_center "TYPE" "$w_type")
-h_name=$(fmt_center "PACKAGE" "$w_name")
-h_old=$(fmt_center "OLD" "$w_old")
-h_new=$(fmt_center "NEW" "$w_new")
 h_size=$(fmt_center "SIZE" "$w_size")
 h_date=$(fmt_center "NEW DATE" "$w_date")
+
+printf -v h_name "%-${w_name}s" "PACKAGE"
+printf -v h_old "%${w_old}s" "OLD"
+printf -v h_new "%-${w_new}s" "NEW"
 
 h_desc="DESCRIPTION"
 (( w_desc == 0 )) && h_desc=""
