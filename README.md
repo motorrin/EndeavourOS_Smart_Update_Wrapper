@@ -90,9 +90,9 @@ For paru:
 ## Option 2: Manual Installation
 If you prefer not to use the AUR, you can install the script manually:
 
-1. `cd ~`
+1. `cd ~`  
 2. `curl -O https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/arch-smart-update`  
-3. `chmod +x arch-smart-update`  
+3. `chmod +x arch-smart-update`
 
 ## ❓ How do I use this script?
 If you installed via AUR, the command is globally available as:  
