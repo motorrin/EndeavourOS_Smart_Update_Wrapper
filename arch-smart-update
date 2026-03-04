@@ -68,6 +68,14 @@ update_from_github() {
             return 1
         fi
 
+        if [[ "$filename" == "custom_commands.default.conf" ]]; then
+            if grep -Eq '^[[:space:]]*[^#[:space:]]' "$tmp_file"; then
+                rm -f "$tmp_file"
+                [[ ! -f "$file_path" ]] && echo -e "${red}  ✘ Security Alert: Active code detected in $filename. Download rejected!${reset}"
+                return 1
+            fi
+        fi
+
         if [[ ! -f "$file_path" ]]; then
             mv "$tmp_file" "$file_path"
             echo -e "${dim}  ✔ Downloaded $filename from GitHub...${reset}"
@@ -185,6 +193,10 @@ if ! CHECK_DB=$(mktemp -d /tmp/checkupdates-db.XXXXXX); then
 fi
 
 cleanup() {
+    if [[ -n "${SUDO_KEEP_ALIVE_PID:-}" ]] && kill -0 "$SUDO_KEEP_ALIVE_PID" 2>/dev/null; then
+        kill "$SUDO_KEEP_ALIVE_PID" 2>/dev/null
+    fi
+
     if [[ -n "$CHECK_DB" && -d "$CHECK_DB" && "$CHECK_DB" == /tmp/* && "$CHECK_DB" != "/tmp/" ]]; then
         rm -rf "$CHECK_DB" 2>/dev/null
 
@@ -405,6 +417,14 @@ if ! sudo -v; then
     exit 1
 fi
 
+(
+    while kill -0 "$$" 2>/dev/null; do
+        sudo -n true 2>/dev/null
+        sleep 60
+    done
+) &
+SUDO_KEEP_ALIVE_PID=$!
+
 AUR_HELPER=""
 if [[ -n "${AUR_HELPER_OVERRIDE:-}" ]]; then
     if command -v "$AUR_HELPER_OVERRIDE" &>/dev/null; then
@@ -427,9 +447,16 @@ if [[ -f /var/lib/pacman/db.lck ]]; then
         echo -e "${yellow}Another package manager process is running.${reset}"
         exit 1
     else
-        echo -e "${yellow}⚠  Stale lock file found (no active process). Removing...${reset}"
-        sudo rm /var/lib/pacman/db.lck
-        echo -e "${green}✔  Lock file removed. Proceeding...${reset}"
+        echo -e "${yellow}⚠  Stale lock file found (/var/lib/pacman/db.lck), but no active process detected.${reset}"
+        echo -ne "  ${white}Remove the stale lock file and continue? [y/N]: ${reset}"
+        read -r rm_lock
+        if [[ "$rm_lock" =~ ^[Yy]$ ]]; then
+            sudo rm /var/lib/pacman/db.lck
+            echo -e "${green}✔  Lock file removed. Proceeding...${reset}"
+        else
+            echo -e "${red}✘ Update aborted by user (database locked).${reset}"
+            exit 1
+        fi
     fi
 fi
 
@@ -682,6 +709,8 @@ max_new=3
 max_repo=4
 max_size=4
 
+declare -A DATE_CACHE
+
 while read -r pkgname old_ver _ new_ver _rest; do
     ((current_idx++))
     percent=$(( current_idx * 100 / pkg_count ))
@@ -711,8 +740,13 @@ while read -r pkgname old_ver _ new_ver _rest; do
     epoch_new=0
     fmt_date_new=""
     diff_hours=9999
+
     if [[ -n "$date_new" && "$date_new" != "N/A" ]]; then
-        read -r epoch_new fmt_date_new <<< "$(LC_TIME=C date -d "$date_new" +'%s %d %b %H:%M' 2>/dev/null)"
+        if [[ -z "${DATE_CACHE["$date_new"]}" ]]; then
+            DATE_CACHE["$date_new"]=$(LC_TIME=C date -d "$date_new" +'%s|%d %b %H:%M' 2>/dev/null || echo "0|")
+        fi
+
+        IFS='|' read -r epoch_new fmt_date_new <<< "${DATE_CACHE["$date_new"]}"
 
         if [[ -n "$epoch_new" ]] && (( epoch_new > 0 )); then
             diff_hours=$(( (now - epoch_new) / 3600 ))
