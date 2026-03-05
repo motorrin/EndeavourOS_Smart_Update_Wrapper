@@ -61,7 +61,7 @@ update_from_github() {
     local tmp_file
     tmp_file=$(mktemp "/tmp/${filename}.XXXXXX")
 
-    if curl -sLfo "$tmp_file" --connect-timeout 3 "$url"; then
+    if curl -sLfo "$tmp_file" --connect-timeout 5 --max-time 10 "$url"; then
         if [[ -n "$expected_string" ]] && ! grep -q "$expected_string" "$tmp_file"; then
             rm -f "$tmp_file"
             [[ ! -f "$file_path" ]] && echo -e "${red}  ✘ Failed to download $filename (Invalid format / Captive Portal)${reset}"
@@ -373,8 +373,9 @@ check_arch_news() {
     if news_ts=$(python3 -c "
 import sys, urllib.request, xml.etree.ElementTree as ET, email.utils
 try:
-    with urllib.request.urlopen('https://archlinux.org/feeds/news/', timeout=3) as req:
-        root = ET.fromstring(req.read())
+    req = urllib.request.Request('https://archlinux.org/feeds/news/', headers={'User-Agent': 'ArchSmartUpdate/1.0'})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        root = ET.fromstring(resp.read())
     item = root.find('./channel/item')
     if item is not None:
         pubDate = item.find('pubDate').text
@@ -465,7 +466,7 @@ refresh_mirrors() {
 
             if [[ -n "$CUSTOM_REFLECTOR" ]]; then
                 echo -e "  ${dim}  Executing custom reflector command...${reset}"
-                if eval "$CUSTOM_REFLECTOR"; then
+                if bash -c "$CUSTOM_REFLECTOR"; then
                     echo -e "  ${green}  ✔ Custom Arch mirrors updated successfully.${reset}\n"
                     REFL_SUCCESS=true
                 else
@@ -501,7 +502,7 @@ fi
 
 (
     while kill -0 "$$" 2>/dev/null; do
-        sudo -n true 2>/dev/null
+        sudo -v 2>/dev/null
         sleep 60
     done
 ) &
@@ -733,7 +734,7 @@ if [[ -n "$repo_pkgs" ]]; then
         name=${line%%~|~*}
         rest=${line#*~|~}
         NEW_DATA["$name"]="$rest"
-    done < <(LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never $repo_pkgs 2>/dev/null | parse_pacman_si)
+    done < <(echo "$repo_pkgs" | xargs env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never 2>/dev/null | parse_pacman_si)
 fi
 
 if [[ -n "$aur_pkgs" && -n "$AUR_HELPER" ]]; then
@@ -742,7 +743,7 @@ if [[ -n "$aur_pkgs" && -n "$AUR_HELPER" ]]; then
         name=${line%%~|~*}
         rest=${line#*~|~}
         NEW_DATA["$name"]="$rest"
-    done < <(LC_ALL=C $AUR_HELPER -Si $aur_pkgs 2>/dev/null | awk -F': ' '
+    done < <(echo "$aur_pkgs" | xargs env LC_ALL=C $AUR_HELPER -Si 2>/dev/null | awk -F': ' '
         /^Name/ {n=$2}
         /^Repository/ {r="AUR"}
         /^Last Modified/ {b=$2}
@@ -756,7 +757,7 @@ log_step "Fetching local metadata (pacman -Qi)..."
 declare -A OLD_DATA
 while IFS='|' read -r name bdate reason; do
     [[ -z "${OLD_DATA[$name]}" ]] && OLD_DATA["$name"]="$bdate|$reason"
-done < <(LC_ALL=C pacman -Qi $all_pkgs 2>/dev/null | awk -F': ' '
+done < <(echo "$all_pkgs" | xargs env LC_ALL=C pacman -Qi 2>/dev/null | awk -F': ' '
     /^Name/ {n=$2}
     /^Build Date/ {b=$2}
     /^Install Reason/ {r=$2}
@@ -765,7 +766,7 @@ done < <(LC_ALL=C pacman -Qi $all_pkgs 2>/dev/null | awk -F': ' '
 
 total_download_size="0 MiB"
 if [[ -n "$repo_pkgs" ]]; then
-    total_download_size=$(LC_ALL=C pacman -Si --dbpath "$CHECK_DB" $repo_pkgs 2>/dev/null | awk '
+    total_download_size=$(echo "$repo_pkgs" | xargs env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" 2>/dev/null | awk '
         /^Download Size/ {
             val=$4
             unit=$5
@@ -1245,7 +1246,7 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
 
         for cmd in "${CUSTOM_CMDS[@]}"; do
             echo -e "  ${dim}➜ Executing: ${white}$cmd${reset}"
-            eval "$cmd"
+            bash -c "$cmd"
             core_exit=$?
 
             if [[ $core_exit -ne 0 ]]; then
