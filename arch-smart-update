@@ -502,7 +502,7 @@ fi
 
 (
     while kill -0 "$$" 2>/dev/null; do
-        sudo -v 2>/dev/null
+        sudo -n true 2>/dev/null
         sleep 60
     done
 ) &
