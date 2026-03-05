@@ -141,17 +141,29 @@ if [[ ! -f "$SETTINGS_CONF" && -f "$SETTINGS_DEFAULT" ]]; then
     echo -e "${dim}  Created default $SETTINGS_CONF${reset}"
 
     echo -e "\n${blue}${bold}  [First Run Setup]${reset}"
-    echo -ne "  ${white}Allow mirror ranking option before update (with confirmation)? [Y/n] (15s timeout): ${reset}"
 
     setup_ans=""
-    read -t 15 -r setup_ans </dev/tty 2>/dev/null || true
+    for (( i=15; i>0; i-- )); do
+        echo -ne "\r\033[2K  ${white}Allow mirror ranking option before update (with confirmation)?[Y/n] (${i}s): ${reset}"
+
+        if read -t 1 -n 1 -r setup_ans </dev/tty 2>/dev/null; then
+            break
+        else
+            ret=$?
+            if (( ret != 142 )); then
+                break
+            fi
+        fi
+    done
+
+    echo ""
 
     if [[ "$setup_ans" =~ ^[Nn]$ ]]; then
         sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=false/' "$SETTINGS_CONF"
-        echo -e "\n  ${dim}➜ Mirror ranking prompt disabled.${reset}\n"
+        echo -e "  ${dim}➜ Mirror ranking prompt disabled.${reset}\n"
     else
         sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=true/' "$SETTINGS_CONF"
-        echo -e "\n  ${dim}➜ Mirror ranking prompt enabled.${reset}\n"
+        echo -e "  ${dim}➜ Mirror ranking prompt enabled.${reset}\n"
     fi
 fi
 
