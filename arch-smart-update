@@ -475,7 +475,7 @@ refresh_mirrors() {
             fi
 
             if ! $REFL_SUCCESS; then
-                echo -e "  ${dim}  Searching Germany/Netherlands, HTTPS, Age < 6h... (WARNINGS ARE EXPECTED)${reset}"
+                echo -e "  ${dim}  Ranking mirrors (DE/NL, HTTPS, <12h)... WARNINGS ARE EXPECTED${reset}"
                 if eval "$DEFAULT_REFLECTOR"; then
                     echo -e "  ${green}  ✔ Arch mirrors updated successfully.${reset}\n"
                     return 0
