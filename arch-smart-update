@@ -432,7 +432,7 @@ refresh_mirrors() {
     local reason="${1:-Mirror instability detected (timeouts or errors).}"
 
     echo -e "\n${yellow}${bold}⚠  $reason${reset}"
-    echo -ne "  ${white}Refresh mirrors (Germany/Netherlands, HTTPS, Rate, Age < 6h)? [Y/n]: ${reset}"
+    echo -ne "  ${white}Refresh mirrors (DE/NL, HTTPS, <12h)? [Y/n]: ${reset}"
     read -r ans
     if [[ "$ans" =~ ^[Yy]$ || -z "$ans" ]]; then
 
@@ -475,7 +475,7 @@ refresh_mirrors() {
             fi
 
             if ! $REFL_SUCCESS; then
-                echo -e "  ${dim}  Ranking mirrors (DE/NL, HTTPS, <12h)... WARNINGS ARE EXPECTED${reset}"
+                echo -e "  ${dim}  Ranking mirrors (DE/NL, HTTPS, <12h)... WARNINGS ARE EXPECTED.${reset}"
                 if eval "$DEFAULT_REFLECTOR"; then
                     echo -e "  ${green}  ✔ Arch mirrors updated successfully.${reset}\n"
                     return 0
