@@ -644,7 +644,7 @@ while (( attempt <= MAX_RETRIES )); do
         fi
 
         if (( err_count >= 10 )); then
-            echo -e "\n${yellow}⚠ Mirror instability detected.${reset}"
+            echo -e "\n${yellow}⚠ The selected mirror might not be optimal.${reset}"
             echo -e "${yellow}This may lead to errors when retrieving updated packages.${reset}"
             echo -ne "  ${white}Continue anyway? [N/y]: ${reset}"
             read -r force_cont
