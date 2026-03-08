@@ -643,8 +643,8 @@ while (( attempt <= MAX_RETRIES )); do
             fi
         fi
 
-        if (( err_count >= 5 )); then
-            echo -e "\n${yellow}⚠ It seems there are difficulties connecting to mirrors at the moment.${reset}"
+        if (( err_count >= 10 )); then
+            echo -e "\n${yellow}⚠ Mirror instability detected.${reset}"
             echo -e "${yellow}This may lead to errors when retrieving updated packages.${reset}"
             echo -ne "  ${white}Continue anyway? [N/y]: ${reset}"
             read -r force_cont
