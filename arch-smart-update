@@ -266,6 +266,7 @@ for pkg in "${FEATURE_PKGS[@]}"; do FEAT_MAP["$pkg"]=1; done
 # --- 3. Temporary Files ---
 OUTPUT_FILE=$(mktemp)
 SYNC_LOG=$(mktemp)
+REFL_LOG=$(mktemp)
 
 if ! CHECK_DB=$(mktemp -d /tmp/checkupdates-db.XXXXXX); then
     echo -e "${red}Error: Could not create temp db directory.${reset}"
@@ -293,6 +294,7 @@ cleanup() {
     local files_to_remove=()
     [[ -f "$OUTPUT_FILE" ]] && files_to_remove+=("$OUTPUT_FILE")
     [[ -f "$SYNC_LOG" ]] && files_to_remove+=("$SYNC_LOG")
+    [[ -f "$REFL_LOG" ]] && files_to_remove+=("$REFL_LOG")
 
     if [[ ${#files_to_remove[@]} -gt 0 ]]; then
         rm -f "${files_to_remove[@]}"
@@ -502,12 +504,45 @@ refresh_mirrors() {
 
             local REFL_SUCCESS=false
 
+            run_refl_and_check() {
+                local cmd="$1"
+
+                bash -c "$cmd" 2>&1 | tee "$REFL_LOG"
+                local exit_code=${PIPESTATUS[0]}
+
+                local err_count
+                err_count=$(grep -cEi "warning: failed to rate|timed out|error" "$REFL_LOG" 2>/dev/null || true)
+
+                if [[ $exit_code -ne 0 ]] && (( err_count >= 15 )); then
+                    echo -e "\n${yellow}⚠ Reflector has encountered problems: $err_count mirrors are unavailable or have timed out.${reset}"
+                    echo -e "${yellow}Perhaps the connection is unstable, or the mirrors are currently down.${reset}"
+
+                    local force_cont
+                    echo -ne "  ${white}Continue with the old mirrorlist anyway? [N/y]: ${reset}"
+                    read -r force_cont
+
+                    if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
+                        echo -e "${red}✘ The update was interrupted by the user.${reset}"
+                        exit 1
+                    fi
+
+                    return 255
+                fi
+
+                return $exit_code
+            }
+
             if [[ -n "$CUSTOM_REFLECTOR" ]]; then
                 echo -e "  ${dim}  Executing custom reflector command...${reset}"
-                if bash -c "$CUSTOM_REFLECTOR"; then
+                run_refl_and_check "$CUSTOM_REFLECTOR"
+                local refl_res=$?
+                if [[ $refl_res -eq 0 ]]; then
                     local new_mirror=$(get_current_mirror)
                     echo -e "  ${green}  ✔ Custom Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
                     REFL_SUCCESS=true
+                elif [[ $refl_res -eq 255 ]]; then
+                    echo -e "  ${yellow}  ⚠ Proceeding with old mirrors...${reset}\n"
+                    return 0
                 else
                     echo -e "  ${yellow}  ⚠ Custom reflector command failed. Falling back to default...${reset}"
                 fi
@@ -515,9 +550,14 @@ refresh_mirrors() {
 
             if ! $REFL_SUCCESS; then
                 echo -e "  ${dim}  Ranking mirrors... WARNINGS ARE EXPECTED.${reset}"
-                if eval "$DEFAULT_REFLECTOR"; then
+                run_refl_and_check "$DEFAULT_REFLECTOR"
+                local refl_res=$?
+                if [[ $refl_res -eq 0 ]]; then
                     local new_mirror=$(get_current_mirror)
                     echo -e "  ${green}  ✔ Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
+                    return 0
+                elif [[ $refl_res -eq 255 ]]; then
+                    echo -e "  ${yellow}  ⚠ Proceeding with old mirrors...${reset}\n"
                     return 0
                 else
                     echo -e "  ${red}  ✘ Reflector failed (Try changing the reflector.conf settings).${reset}\n"
@@ -636,7 +676,7 @@ while (( attempt <= MAX_RETRIES )); do
         break
     else
         if (( attempt < MAX_RETRIES )); then
-            if refresh_mirrors; then
+            if refresh_mirrors "Failed to sync cleanly. Updating mirrors..."; then
                 ((attempt++))
                 log_step "Retrying sync..."
                 continue
@@ -646,7 +686,7 @@ while (( attempt <= MAX_RETRIES )); do
         if (( err_count >= 15 )); then
             echo -e "\n${yellow}⚠ The selected mirror might not be optimal.${reset}"
             echo -e "${yellow}This may lead to errors when retrieving updated packages.${reset}"
-            echo -ne "  ${white}Continue anyway? [N/y]: ${reset}"
+            echo -ne "  ${white}Continue anyway? [y/N]: ${reset}"
             read -r force_cont
             if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
                 echo -e "${red}✘ Update aborted by user.${reset}"
