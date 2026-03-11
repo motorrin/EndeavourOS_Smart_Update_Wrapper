@@ -470,7 +470,7 @@ refresh_mirrors() {
     if [[ -n "$REFL_CONF" && -f "$REFL_CONF" ]]; then
         CUSTOM_REFLECTOR=$(grep -v '^#' "$REFL_CONF" 2>/dev/null | grep '[^[:space:]]' | head -n 1)
     fi
-    local DEFAULT_REFLECTOR="sudo reflector --country Germany,Netherlands --protocol https --age 12 --latest 50 --number 20 --sort rate --save /etc/pacman.d/mirrorlist --download-timeout 10"
+    local DEFAULT_REFLECTOR="sudo reflector --country Germany,Netherlands,France,Norway --protocol https --age 12 --latest 50 --number 20 --sort rate --save /etc/pacman.d/mirrorlist --download-timeout 10"
     local ACTUAL_CMD="${CUSTOM_REFLECTOR:-$DEFAULT_REFLECTOR}"
 
     echo -e "\n${yellow}${bold}⚠  $reason${reset}"
@@ -685,7 +685,6 @@ while (( attempt <= MAX_RETRIES )); do
 
         if (( err_count >= 15 )); then
             echo -e "\n${yellow}⚠ The selected mirror might not be optimal.${reset}"
-            echo -e "${yellow}This may lead to errors when retrieving updated packages.${reset}"
             echo -ne "  ${white}Continue anyway? [y/N]: ${reset}"
             read -r force_cont
             if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
