@@ -10,6 +10,8 @@
 
 **Arch_Smart_Update** is an advanced, ultra-safe, and visually stunning bash script for managing system updates on vanilla **Arch Linux** and its derivatives (has better integration with **EndeavourOS** and **CachyOS** packages and tools, **but works great on other Arch-based distributions as well**). It acts as an intelligent shield for your package manager: analyzing pending updates, checking official news, automating backups, and utilizing a built-in **Advisor** to protect your machine from Day-1 bugs, broken dependencies, and kernel panics.
 
+⚠️ **IMPORTANT DISCLAIMER:** The update recommendations provided by the Advisor are helpful guidelines, not absolute rules. As an Arch Linux user, **you are the system administrator** and hold ultimate responsibility for your machine. Always review the update list and use your own judgment before pressing "Y". This script is a powerful safety net, but it does not replace common sense. The author is not responsible for any broken systems, unbootable kernels, or data loss!
+
 ---
 
 ![01](https://github.com/user-attachments/assets/9aab8143-8587-4c49-b822-915f9a1d950e)
