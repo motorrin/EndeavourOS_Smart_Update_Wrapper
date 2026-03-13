@@ -248,11 +248,51 @@ if [[ -n "$SETTINGS_CONF" && -f "$SETTINGS_CONF" ]]; then
     PROMPT_MIRROR_REFRESH=$(grep -oP '^PROMPT_MIRROR_REFRESH=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
     MAX_BACKUP_COPIES=$(grep -oP '^MAX_BACKUP_COPIES=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
 
-    if ! grep -q "AUR_HELPER_OVERRIDE=" "$SETTINGS_CONF"; then
-        echo -e "\n# Override the default AUR helper (e.g. \"yay\", \"pikaur\"). Leave empty to auto-detect." >> "$SETTINGS_CONF"
-        echo "AUR_HELPER_OVERRIDE=\"\"" >> "$SETTINGS_CONF"
-    fi
+    T_MIRROR_H=$(grep -oP '^T_MIRROR_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
+    T_FEAT_H=$(grep -oP '^T_FEAT_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
+    T_CRIT_H=$(grep -oP '^T_CRIT_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
+    T_DE_H=$(grep -oP '^T_DE_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
+    T_NUKE_H=$(grep -oP '^T_NUKE_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
+    IGNORE_PATCH_TIMERS=$(grep -oP '^IGNORE_PATCH_TIMERS=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
+
+    [[ "$T_MIRROR_H" =~ ^[0-9]+$ ]] || T_MIRROR_H=""
+    [[ "$T_FEAT_H" =~ ^[0-9]+$ ]] || T_FEAT_H=""
+    [[ "$T_CRIT_H" =~ ^[0-9]+$ ]] || T_CRIT_H=""
+    [[ "$T_DE_H" =~ ^[0-9]+$ ]] || T_DE_H=""
+    [[ "$T_NUKE_H" =~ ^[0-9]+$ ]] || T_NUKE_H=""
+
+    if ! grep -q "T_MIRROR_H=" "$SETTINGS_CONF"; then
+            cat <<EOF >> "$SETTINGS_CONF"
+
+# Minimum age for ANY package (allows mirrors to fully sync). Integers only.
+T_MIRROR_H=3
+
+# Delay for FEATURE packages (e.g., pipewire, networkmanager). Integers only.
+T_FEAT_H=6
+
+# Delay for CRITICAL packages (e.g., base, mesa, xorg, wayland). Integers only.
+T_CRIT_H=12
+
+# Delay for Desktop Environments (e.g., Plasma, Gnome, Hyprland). Integers only.
+T_DE_H=12
+
+# Delay for NUCLEAR / Core system packages (e.g., linux, glibc, systemd). Integers only.
+T_NUKE_H=24
+
+# If true, updates identified as "Patch" (e.g., minor bugfixes or pkgrel rebuilds)
+# will ignore their category timers (like 24h for NUKE) and will only
+# wait for the base T_MIRROR_H timer (3h by default) to ensure mirrors are synced.
+IGNORE_PATCH_TIMERS=true
+EOF
+        fi
 fi
+
+: ${T_MIRROR_H:=3}
+: ${T_FEAT_H:=6}
+: ${T_CRIT_H:=12}
+: ${T_DE_H:=12}
+: ${T_NUKE_H:=24}
+: ${IGNORE_PATCH_TIMERS:=true}
 
 declare -A NUKE_MAP
 for pkg in "${NUCLEAR_PKGS[@]}"; do NUKE_MAP["$pkg"]=1; done
@@ -311,6 +351,7 @@ log_step() {
 get_update_type() {
     local old=$1
     local new=$2
+    local level=${3:-3}
 
     local v_old=${old#*:}
     local v_new=${new#*:}
@@ -326,8 +367,11 @@ get_update_type() {
         [[ "$e_old" != "$e_new" ]] && { echo "EPOCH"; return; }
     fi
 
-    local nums_old=($(echo "$v_old" | sed 's/[^0-9]/ /g'))
-    local nums_new=($(echo "$v_new" | sed 's/[^0-9]/ /g'))
+    local up_old="${v_old%-*}"
+    local up_new="${v_new%-*}"
+
+    local nums_old=($(echo "$up_old" | sed 's/[^0-9]/ /g'))
+    local nums_new=($(echo "$up_new" | sed 's/[^0-9]/ /g'))
 
     local len=${#nums_new[@]}
     for (( i=0; i<len; i++ )); do
@@ -337,7 +381,6 @@ get_update_type() {
         [[ -z "$n_old" ]] && { echo "MINOR"; return; }
 
         if (( 10#${n_old:-0} != 10#${n_new:-0} )); then
-
             if (( (10#${n_new:-0} >= 2020 && 10#${n_new:-0} <= 2100) || \
                   (10#${n_new:-0} >= 20200000 && 10#${n_new:-0} <= 21001231) )); then
                 echo "CALVER"
@@ -346,12 +389,18 @@ get_update_type() {
 
             if (( i == 0 )); then
                 echo "MAJOR"
+                return
             elif (( i == 1 )); then
                 echo "MINOR"
+                return
             else
-                echo "Patch"
+                if (( level == 0 )); then
+                    echo "MINOR"
+                else
+                    echo "Patch"
+                fi
+                return
             fi
-            return
         fi
     done
 
@@ -967,7 +1016,7 @@ while read -r pkgname old_ver _ new_ver _rest; do
         pkg_level=3
     fi
 
-    upd_type=$(get_update_type "$old_ver" "$new_ver")
+    upd_type=$(get_update_type "$old_ver" "$new_ver" "$pkg_level")
 
     sort_key=$(printf "%d.%05d" "$pkg_level" "$diff_hours")
 
@@ -1103,12 +1152,6 @@ echo -e "  ${gray}Total Download Size: ${white}${bold}${total_download_size}${re
 give_advice() {
     local now=$(date +%s)
 
-    local T_MIRROR_H=3
-    local T_FEAT_H=6
-    local T_CRIT_H=12
-    local T_DE_H=12
-    local T_NUKE_H=24
-
     local T_MIRROR_SEC=$(( T_MIRROR_H * 3600 ))
     local T_FEAT_SEC=$(( T_FEAT_H * 3600 ))
     local T_CRIT_SEC=$(( T_CRIT_H * 3600 ))
@@ -1135,7 +1178,7 @@ give_advice() {
 
     local DE_PATTERN="^(plasma-|gnome-|hyprland|kwin|mutter|cinnamon|xfce4|qt[56]-|gtk[34]|kf[56]-|frameworkintegration)"
 
-    while IFS=$'\t' read -r _ _ pkg_level _ pkgname _ _ repo _ _ epoch_new _ _; do
+    while IFS=$'\t' read -r _ _ pkg_level upd_type pkgname _ _ repo _ _ epoch_new _ _; do
         [[ "$repo" == "AUR" ]] && continue
 
         local pkg_ts=${epoch_new:-0}
@@ -1144,42 +1187,49 @@ give_advice() {
         local age_sec=$(( now - pkg_ts ))
         (( age_sec < 0 )) && age_sec=0
 
-        if (( pkg_level == 0 )); then
-            if (( age_sec < T_NUKE_SEC )); then
-                ((fresh_nuke_count++))
-                if (( age_sec < min_age_nuke_sec )); then
-                    min_age_nuke_sec=$age_sec
-                    risky_nuke_pkg=$pkgname
-                fi
-            fi
+        local is_patch_override=0
+        if [[ "${IGNORE_PATCH_TIMERS,,}" == "true" && "$upd_type" == "Patch" ]]; then
+            is_patch_override=1
         fi
 
-        if (( pkg_level == 1 )); then
-            if (( age_sec < T_CRIT_SEC )); then
-                ((fresh_crit_count++))
-                if (( age_sec < min_age_crit_sec )); then
-                    min_age_crit_sec=$age_sec
-                    risky_crit_pkg=$pkgname
+        if (( is_patch_override == 0 )); then
+            if (( pkg_level == 0 )); then
+                if (( age_sec < T_NUKE_SEC )); then
+                    ((fresh_nuke_count++))
+                    if (( age_sec < min_age_nuke_sec )); then
+                        min_age_nuke_sec=$age_sec
+                        risky_nuke_pkg=$pkgname
+                    fi
                 fi
             fi
-        fi
 
-        if [[ "$pkgname" =~ $DE_PATTERN ]]; then
-            if (( age_sec < T_DE_SEC )); then
-                ((fresh_de_count++))
-                if (( age_sec < min_age_de_sec )); then
-                    min_age_de_sec=$age_sec
-                    risky_de_pkg=$pkgname
+            if (( pkg_level == 1 )); then
+                if (( age_sec < T_CRIT_SEC )); then
+                    ((fresh_crit_count++))
+                    if (( age_sec < min_age_crit_sec )); then
+                        min_age_crit_sec=$age_sec
+                        risky_crit_pkg=$pkgname
+                    fi
                 fi
             fi
-        fi
 
-        if (( pkg_level == 2 )); then
-            if (( age_sec < T_FEAT_SEC )); then
-                ((fresh_feat_count++))
-                if (( age_sec < min_age_feat_sec )); then
-                    min_age_feat_sec=$age_sec
-                    risky_feat_pkg=$pkgname
+            if [[ "$pkgname" =~ $DE_PATTERN ]]; then
+                if (( age_sec < T_DE_SEC )); then
+                    ((fresh_de_count++))
+                    if (( age_sec < min_age_de_sec )); then
+                        min_age_de_sec=$age_sec
+                        risky_de_pkg=$pkgname
+                    fi
+                fi
+            fi
+
+            if (( pkg_level == 2 )); then
+                if (( age_sec < T_FEAT_SEC )); then
+                    ((fresh_feat_count++))
+                    if (( age_sec < min_age_feat_sec )); then
+                        min_age_feat_sec=$age_sec
+                        risky_feat_pkg=$pkgname
+                    fi
                 fi
             fi
         fi
