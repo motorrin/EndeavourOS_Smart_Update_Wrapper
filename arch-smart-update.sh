@@ -857,7 +857,12 @@ while (( attempt <= MAX_RETRIES )); do
 
     set -o pipefail
     if $DAEMON_MODE; then
-        if fakeroot pacman -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
+        PACMAN_OPTS=""
+        if pacman --disable-sandbox --version >/dev/null 2>&1; then
+            PACMAN_OPTS="--disable-sandbox"
+        fi
+
+        if fakeroot pacman $PACMAN_OPTS -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
             PACMAN_EXIT=0
         else
             PACMAN_EXIT=$?
