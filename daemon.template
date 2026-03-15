@@ -6,7 +6,7 @@
 
 [Unit]
 Description=Arch Smart Update Background Checker
-After=network-online.target graphical-session.target
+After=graphical-session.target
 
 [Service]
 Type=oneshot
