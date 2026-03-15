@@ -66,6 +66,7 @@ PKG_CONF="$CONFIG_DIR/packages.conf"
 SETTINGS_DEFAULT="$CONFIG_DIR/settings.default.conf"
 SETTINGS_CONF="$CONFIG_DIR/settings.conf"
 DAEMON_TEMPLATE="$CONFIG_DIR/daemon.template"
+ICON_PATH="$CONFIG_DIR/ASU.png"
 
 update_from_github() {
     local file_path="$1"
@@ -231,6 +232,9 @@ echo -e "${dim}Checking for configuration updates...${reset}"
 update_from_github "$PKG_CONF" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/packages.conf" "NUCLEAR_PKGS"
 update_from_github "$SETTINGS_DEFAULT" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/settings.conf" "PROMPT_MIRROR_REFRESH"
 update_from_github "$DAEMON_TEMPLATE" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/daemon.template" "[TimerTemplate]"
+update_from_github "$ICON_PATH" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/ASU.png" ""
+
+[[ -f "$ICON_PATH" ]] && chmod 644 "$ICON_PATH" 2>/dev/null
 
 if [[ ! -f "$SETTINGS_CONF" && -f "$SETTINGS_DEFAULT" ]]; then
     cp "$SETTINGS_DEFAULT" "$SETTINGS_CONF"
@@ -598,7 +602,10 @@ except Exception:
 
                 if (( news_ts != OLD_NEWS_TS )); then
                     if command -v notify-send >/dev/null 2>&1; then
-                        notify-send -a "Arch Smart Update" -u critical -i dialog-warning \
+                        local notif_icon="dialog-warning"
+                        [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
+
+                        notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" \
                             "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating."
                     fi
                     echo "$news_ts" > "$NEWS_CACHE"
@@ -1531,7 +1538,10 @@ if [[ "$DAEMON_MODE" == true ]]; then
         [[ -f "$CACHE_FILE" ]] && OLD_COUNT=$(cat "$CACHE_FILE" 2>/dev/null)
 
         if (( pkg_count != OLD_COUNT )); then
-            notify-send -a "Arch Smart Update" -u normal -i software-update-available \
+            local notif_icon="software-update-available"
+            [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
+
+            notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" \
                 "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install."
             echo "$pkg_count" > "$CACHE_FILE"
         fi
