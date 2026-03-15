@@ -33,6 +33,26 @@ for cmd in python3 tar awk stat fuser curl; do
     fi
 done
 
+# --- 1.3 Daemon mode ---
+DAEMON_MODE=false
+if [[ "$1" == "--daemon" || "$1" == "--check" ]]; then
+    DAEMON_MODE=true
+fi
+
+# --- 1.4 Helper: Prompt ---
+prompt_with_timeout() {
+    local msg="$1" options="$2" timeout_sec="$3" var_name="$4"
+    local user_input=""
+    if ! $DAEMON_MODE; then
+        for (( i=timeout_sec; i>0; i-- )); do
+            echo -ne "\r\033[2K  ${white}${msg}[${options}] (${i}s): ${reset}"
+            if read -t 1 -n 1 -r user_input </dev/tty 2>/dev/null; then break; else (( $? != 142 )) && break; fi
+        done
+        echo ""
+    fi
+    [[ -n "$user_input" ]] && declare -g "$var_name=$user_input"
+}
+
 # --- 2. Configuration & External Files ---
 if [[ -n "$SUDO_USER" ]]; then
     USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
@@ -43,15 +63,9 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$USER_HOME/.config}/arch-smart-update"
 mkdir -p "$CONFIG_DIR"
 
 PKG_CONF="$CONFIG_DIR/packages.conf"
-CMD_DEFAULT="$CONFIG_DIR/custom_commands.default.conf"
-REFL_DEFAULT="$CONFIG_DIR/reflector.default.conf"
-
-USER_PKG_CONF="$CONFIG_DIR/user_packages.conf"
-CMD_CONF="$CONFIG_DIR/custom_commands.conf"
-REFL_CONF="$CONFIG_DIR/reflector.conf"
-
-SETTINGS_DEFAULT="$CONFIG_DIR/other_settings.default.conf"
-SETTINGS_CONF="$CONFIG_DIR/other_settings.conf"
+SETTINGS_DEFAULT="$CONFIG_DIR/settings.default.conf"
+SETTINGS_CONF="$CONFIG_DIR/settings.conf"
+DAEMON_TEMPLATE="$CONFIG_DIR/daemon.template"
 
 update_from_github() {
     local file_path="$1"
@@ -64,29 +78,29 @@ update_from_github() {
     if curl -sLfo "$tmp_file" --connect-timeout 5 --max-time 10 "$url"; then
         if [[ -n "$expected_string" ]] && ! grep -q "$expected_string" "$tmp_file"; then
             rm -f "$tmp_file"
-            [[ ! -f "$file_path" ]] && echo -e "${red}  ✘ Failed to download $filename (Invalid format / Captive Portal)${reset}"
+            [[ ! -f "$file_path" ]] && echo -e "${red}Failed to download $filename (Invalid format / Captive Portal)${reset}"
             return 1
         fi
 
-        if [[ "$filename" == "custom_commands.default.conf" ]]; then
-            if grep -Eq '^[[:space:]]*[^#[:space:]]' "$tmp_file"; then
+        if [[ "$filename" == "settings.default.conf" ]]; then
+            if awk '/^CUSTOM_CMDS=\(/ {in_block=1; next} in_block && /^\)/ {in_block=0} in_block && /^[[:space:]]*[^#[:space:]]/ {print "DANGER"; exit}' "$tmp_file" | grep -q "DANGER"; then
                 rm -f "$tmp_file"
-                [[ ! -f "$file_path" ]] && echo -e "${red}  ✘ Security Alert: Active code detected in $filename. Download rejected!${reset}"
+                [[ ! -f "$file_path" ]] && echo -e "${red}Security Alert: Active custom commands detected in default settings. Download rejected!${reset}"
                 return 1
             fi
         fi
 
         if [[ ! -f "$file_path" ]]; then
             mv "$tmp_file" "$file_path"
-            echo -e "${dim}  ✔ Downloaded $filename from GitHub...${reset}"
+            echo -e "${dim}Downloaded $filename from GitHub...${reset}"
         elif ! cmp -s "$file_path" "$tmp_file"; then
             mv "$tmp_file" "$file_path"
-            echo -e "${green}  ✔ Updated $filename from GitHub!${reset}"
+            echo -e "${green}Updated $filename from GitHub!${reset}"
         else
             rm -f "$tmp_file"
         fi
     else
-        [[ ! -f "$file_path" ]] && echo -e "${red}  ✘ Failed to download $filename (No internet?)${reset}"
+        [[ ! -f "$file_path" ]] && echo -e "${red}Failed to download $filename (No internet connection?)${reset}"
         rm -f "$tmp_file"
     fi
 }
@@ -101,116 +115,19 @@ validate_user_conf() {
     owner=$(stat -Lc '%U' "$file" 2>/dev/null)
     local real_user="${SUDO_USER:-$(id -un)}"
     if [[ "$owner" != "$real_user" && "$owner" != "root" ]]; then
-        echo -e "${bg_nuke} ⚠ SECURITY ${reset} ${red}$label is owned by '${owner:-UNKNOWN}', expected '$real_user' or 'root'. Refusing to load.${reset}"
+        echo -e "${bg_nuke}SECURITY ${reset} ${red}$label is owned by '${owner:-UNKNOWN}', expected '$real_user' or 'root'. Refusing to load.${reset}"
         return 1
     fi
 
     local perms
     perms=$(stat -Lc '%a' "$file" 2>/dev/null)
     if (( 8#${perms:-0} & 8#022 )); then
-        echo -e "${bg_nuke} ⚠ SECURITY ${reset} ${red}$label is group/world-writable (${perms}). Refusing to load.${reset}"
-        echo -e "${yellow}  Fix with: chmod 600 \"$file\"${reset}"
+        echo -e "${bg_nuke}SECURITY ${reset} ${red}$label is group/world-writable (${perms}). Refusing to load.${reset}"
+        echo -e "${yellow}Fix with: chmod 600 \"$file\"${reset}"
         return 1
     fi
-
     return 0
 }
-
-echo -e "${dim}  Checking for configuration updates...${reset}"
-
-update_from_github "$PKG_CONF" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/packages.conf" "NUCLEAR_PKGS"
-update_from_github "$CMD_DEFAULT" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/custom_commands.conf" "custom commands configuration"
-update_from_github "$REFL_DEFAULT" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/reflector.conf" "Reflector settings"
-update_from_github "$SETTINGS_DEFAULT" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/other_settings.conf" "PROMPT_MIRROR_REFRESH"
-
-if [[ ! -f "$CMD_CONF" && -f "$CMD_DEFAULT" ]]; then
-    cp "$CMD_DEFAULT" "$CMD_CONF"
-    chmod 600 "$CMD_CONF"
-    echo -e "${dim}  Created default $CMD_CONF${reset}"
-fi
-
-if [[ ! -f "$REFL_CONF" && -f "$REFL_DEFAULT" ]]; then
-    cp "$REFL_DEFAULT" "$REFL_CONF"
-    chmod 600 "$REFL_CONF"
-    echo -e "${dim}  Created default $REFL_CONF${reset}"
-fi
-
-if [[ ! -f "$SETTINGS_CONF" && -f "$SETTINGS_DEFAULT" ]]; then
-    cp "$SETTINGS_DEFAULT" "$SETTINGS_CONF"
-    chmod 600 "$SETTINGS_CONF"
-    echo -e "${dim}  Created default $SETTINGS_CONF${reset}"
-
-    echo -e "\n${blue}${bold}  [First Run Setup]${reset}"
-
-    setup_ans=""
-    for (( i=15; i>0; i-- )); do
-        echo -ne "\r\033[2K  ${white}Allow mirror ranking option before update (with confirmation)? [Y/n] (${i}s): ${reset}"
-
-        if read -t 1 -n 1 -r setup_ans </dev/tty 2>/dev/null; then
-            break
-        else
-            ret=$?
-            if (( ret != 142 )); then
-                break
-            fi
-        fi
-    done
-
-    echo ""
-
-    if [[ "$setup_ans" =~ ^[Nn]$ ]]; then
-        sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=false/' "$SETTINGS_CONF"
-        echo -e "  ${dim}➜ Mirror ranking prompt disabled.${reset}\n"
-    else
-        sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=true/' "$SETTINGS_CONF"
-        echo -e "  ${dim}➜ Mirror ranking prompt enabled.${reset}\n"
-    fi
-fi
-
-if ! validate_user_conf "$CMD_CONF" "custom_commands.conf"; then
-    echo -e "${yellow}  ⚠ Custom commands disabled due to security check failure.${reset}"
-    CMD_CONF=""
-fi
-
-if ! validate_user_conf "$REFL_CONF" "reflector.conf"; then
-    echo -e "${yellow}  ⚠ Custom reflector command disabled due to security check failure.${reset}"
-    REFL_CONF=""
-fi
-
-if ! validate_user_conf "$SETTINGS_CONF" "other_settings.conf"; then
-    echo -e "${yellow}  ⚠ Settings disabled due to security check failure.${reset}"
-    SETTINGS_CONF=""
-fi
-
-if ! validate_user_conf "$PKG_CONF" "packages.conf"; then
-    echo -e "${yellow}  ⚠ Packages config disabled due to security check failure.${reset}"
-    PKG_CONF=""
-fi
-
-if [[ ! -f "$USER_PKG_CONF" ]]; then
-    cat <<EOF > "$USER_PKG_CONF"
-# user_packages.conf
-# Here you can add your packages to the existing categories in packages.conf.
-# This file will NEVER be overwritten by the script during updates.
-#
-# Example usage:
-# NUCLEAR_PKGS+=("my-custom-kernel")
-# CRITICAL_PKGS+=("my-critical-app" "another-app")
-# FEATURE_PKGS+=("my-feature-app")
-
-EOF
-    chmod 600 "$USER_PKG_CONF"
-    echo -e "${dim}  Created default user_packages.conf${reset}"
-fi
-
-if ! validate_user_conf "$USER_PKG_CONF" "user_packages.conf"; then
-    echo -e "${yellow}  ⚠ User packages disabled due to security check failure.${reset}"
-    USER_PKG_CONF=""
-fi
-
-NUCLEAR_PKGS=("glibc" "linux" "systemd" "pacman" "nvidia" "mkinitcpio")
-CRITICAL_PKGS=("base" "base-devel" "mesa" "wayland" "xorg-server" "dbus")
-FEATURE_PKGS=("pipewire" "plasma-desktop" "gnome-shell" "hyprland" "networkmanager")
 
 parse_bash_array() {
     local file=$1
@@ -229,64 +146,182 @@ parse_bash_array() {
     ' "$file"
 }
 
+migrate_old_configs() {
+    local migrated=false
+    local old_set="$CONFIG_DIR/other_settings.conf"
+    local old_ref="$CONFIG_DIR/reflector.conf"
+    local old_cmd="$CONFIG_DIR/custom_commands.conf"
+    local old_pkg="$CONFIG_DIR/user_packages.conf"
+
+    [[ ! -f "$old_set" && ! -f "$old_ref" && ! -f "$old_cmd" && ! -f "$old_pkg" ]] && return 1
+
+    echo -e "${dim}Migrating old configuration files to settings.conf...${reset}"
+
+    if [[ -f "$old_set" ]]; then
+        while IFS='=' read -r key val; do
+            [[ -z "$key" || "$key" == \#* ]] && continue
+            val="${val//[\"\'$'\r']/}"
+            sed -i "s|^${key}=.*|${key}=\"${val}\"|" "$SETTINGS_CONF"
+        done < "$old_set"
+        migrated=true
+    fi
+
+    if [[ -f "$old_ref" ]]; then
+        local ref_cmd=$(grep -v '^#' "$old_ref" | grep '[^[:space:]]' | head -n 1)
+        if [[ -n "$ref_cmd" ]]; then
+            local esc_ref=$(printf '%s\n' "$ref_cmd" | sed -e 's/[\/&]/\\&/g')
+            sed -i "s|^# CUSTOM_REFLECTOR_CMD=.*|CUSTOM_REFLECTOR_CMD=\"${esc_ref}\"|" "$SETTINGS_CONF"
+        fi
+        migrated=true
+    fi
+
+    if [[ -f "$old_cmd" ]]; then
+        local cmds=""
+        while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [[ -z "$line" || "$line" == \#* ]] && continue
+            cmds+="    \"${line//\"/\\\"}\"\n"
+        done < "$old_cmd"
+
+        if [[ -n "$cmds" ]]; then
+            awk -v inject="$cmds" '
+                /^CUSTOM_CMDS=\(/ { print; printf "%s", inject; in_block=1; next }
+                in_block && /^\)/ { print; in_block=0; next }
+                in_block { next }
+                { print }
+            ' "$SETTINGS_CONF" > "${SETTINGS_CONF}.tmp" && mv "${SETTINGS_CONF}.tmp" "$SETTINGS_CONF"
+        fi
+        migrated=true
+    fi
+
+    if [[ -f "$old_pkg" ]]; then
+        for cat in NUCLEAR_PKGS CRITICAL_PKGS FEATURE_PKGS; do
+            local items=$(parse_bash_array "$old_pkg" "$cat" | sed 's/^/    "/; s/$/"/')
+            if [[ -n "$items" ]]; then
+                awk -v arr="USER_${cat}" -v inject="$items" '
+                    $0 ~ "^"arr"=\\(" { print; print inject; in_block=1; next }
+                    in_block && /^\)/ { print; in_block=0; next }
+                    in_block { next }
+                    { print }
+                ' "$SETTINGS_CONF" > "${SETTINGS_CONF}.tmp" && mv "${SETTINGS_CONF}.tmp" "$SETTINGS_CONF"
+            fi
+        done
+        migrated=true
+    fi
+
+    if $migrated; then
+        echo -e "  ${green}Migration complete. Removing old configuration files.${reset}"
+        rm -f "$old_set" "$old_ref" "$old_cmd" "$old_pkg" \
+              "$CONFIG_DIR/other_settings.default.conf" \
+              "$CONFIG_DIR/reflector.default.conf" \
+              "$CONFIG_DIR/custom_commands.default.conf"
+        return 0
+    fi
+    return 1
+}
+
+echo -e "${dim}Checking for configuration updates...${reset}"
+
+update_from_github "$PKG_CONF" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/packages.conf" "NUCLEAR_PKGS"
+update_from_github "$SETTINGS_DEFAULT" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/settings.conf" "PROMPT_MIRROR_REFRESH"
+update_from_github "$DAEMON_TEMPLATE" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/daemon.template" "[TimerTemplate]"
+
+if [[ ! -f "$SETTINGS_CONF" && -f "$SETTINGS_DEFAULT" ]]; then
+    cp "$SETTINGS_DEFAULT" "$SETTINGS_CONF"
+    chmod 600 "$SETTINGS_CONF"
+    echo -e "${dim}Created default $SETTINGS_CONF${reset}"
+
+    if ! migrate_old_configs; then
+        echo -e "\n${blue}${bold}[First Run Setup]${reset}"
+        setup_ans="Y"
+        daemon_ans="N"
+
+        prompt_with_timeout "Allow mirror ranking option before update (with confirmation)?" "Y/n" 15 setup_ans
+        prompt_with_timeout "Enable background update checker?" "y/N" 15 daemon_ans
+
+        echo ""
+
+        if [[ "$setup_ans" =~ ^[Nn]$ ]]; then
+            sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=false/' "$SETTINGS_CONF"
+            echo -e "  ${dim}Mirror ranking prompt disabled.${reset}"
+        else
+            sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=true/' "$SETTINGS_CONF"
+            echo -e "  ${dim}Mirror ranking prompt enabled.${reset}"
+        fi
+
+        if [[ "$daemon_ans" =~ ^[Yy]$ ]]; then
+            sed -i 's/^ENABLE_BACKGROUND_CHECK=.*/ENABLE_BACKGROUND_CHECK=true/' "$SETTINGS_CONF"
+            echo -e "  ${dim}Background checker enabled.${reset}"
+            if ! pacman -Q libnotify >/dev/null 2>&1; then
+                echo -e "  ${yellow}Warning: The ${red}libnotify${yellow} package is not installed. Please install it for notifications to work.${reset}\n"
+            else
+                echo ""
+            fi
+        else
+            sed -i 's/^ENABLE_BACKGROUND_CHECK=.*/ENABLE_BACKGROUND_CHECK=false/' "$SETTINGS_CONF"
+            echo -e "  ${dim}Background checker disabled.${reset}\n"
+        fi
+    fi
+else
+    migrate_old_configs
+fi
+
+if ! validate_user_conf "$SETTINGS_CONF" "settings.conf"; then
+    echo -e "${yellow}Settings disabled due to security check failure.${reset}"
+    SETTINGS_CONF=""
+fi
+
+if ! validate_user_conf "$PKG_CONF" "packages.conf"; then
+    echo -e "${yellow}Packages config disabled due to security check failure.${reset}"
+    PKG_CONF=""
+fi
+
+NUCLEAR_PKGS=("glibc" "linux" "systemd" "pacman" "nvidia" "mkinitcpio")
+CRITICAL_PKGS=("base" "base-devel" "mesa" "wayland" "xorg-server" "dbus")
+FEATURE_PKGS=("pipewire" "plasma-desktop" "gnome-shell" "hyprland" "networkmanager")
+CUSTOM_CMDS=()
+
 if [[ -f "$PKG_CONF" ]]; then
     NUCLEAR_PKGS=($(parse_bash_array "$PKG_CONF" "NUCLEAR_PKGS"))
     CRITICAL_PKGS=($(parse_bash_array "$PKG_CONF" "CRITICAL_PKGS"))
     FEATURE_PKGS=($(parse_bash_array "$PKG_CONF" "FEATURE_PKGS"))
 else
-    echo -e "${red}  ⚠ Could not load packages.conf. Using built-in basic fallbacks.${reset}"
-fi
-
-if [[ -n "$USER_PKG_CONF" && -f "$USER_PKG_CONF" ]]; then
-    NUCLEAR_PKGS+=($(parse_bash_array "$USER_PKG_CONF" "NUCLEAR_PKGS"))
-    CRITICAL_PKGS+=($(parse_bash_array "$USER_PKG_CONF" "CRITICAL_PKGS"))
-    FEATURE_PKGS+=($(parse_bash_array "$USER_PKG_CONF" "FEATURE_PKGS"))
+    echo -e "${red}Could not load packages.conf. Using built-in basic fallbacks.${reset}"
 fi
 
 if [[ -n "$SETTINGS_CONF" && -f "$SETTINGS_CONF" ]]; then
-    AUR_HELPER_OVERRIDE=$(grep -oP '^AUR_HELPER_OVERRIDE=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
-    PROMPT_MIRROR_REFRESH=$(grep -oP '^PROMPT_MIRROR_REFRESH=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
-    MAX_BACKUP_COPIES=$(grep -oP '^MAX_BACKUP_COPIES=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
+    while IFS='=' read -r key val; do
+        val="${val//[\"\'$'\r']/}"
+        case "$key" in
+            AUR_HELPER_OVERRIDE|PROMPT_MIRROR_REFRESH|MAX_BACKUP_COPIES|CHECK_INTERVAL|START_DELAY|ENABLE_BACKGROUND_CHECK|T_MIRROR_H|T_FEAT_H|T_CRIT_H|T_DE_H|T_NUKE_H|IGNORE_PATCH_TIMERS|GENERATE_LOGS|MAX_LOG_NUMBERS|CUSTOM_REFLECTOR_CMD)
+                declare -g "$key=$val" ;;
+        esac
+    done < "$SETTINGS_CONF"
 
-    T_MIRROR_H=$(grep -oP '^T_MIRROR_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
-    T_FEAT_H=$(grep -oP '^T_FEAT_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
-    T_CRIT_H=$(grep -oP '^T_CRIT_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
-    T_DE_H=$(grep -oP '^T_DE_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
-    T_NUKE_H=$(grep -oP '^T_NUKE_H=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
-    IGNORE_PATCH_TIMERS=$(grep -oP '^IGNORE_PATCH_TIMERS=\K.*' "$SETTINGS_CONF" | tr -d "\"'\r")
+    mapfile -t USER_NUKE < <(parse_bash_array "$SETTINGS_CONF" "USER_NUCLEAR_PKGS")
+    [[ ${#USER_NUKE[@]} -gt 0 ]] && NUCLEAR_PKGS+=("${USER_NUKE[@]}")
 
-    [[ "$T_MIRROR_H" =~ ^[0-9]+$ ]] || T_MIRROR_H=""
-    [[ "$T_FEAT_H" =~ ^[0-9]+$ ]] || T_FEAT_H=""
-    [[ "$T_CRIT_H" =~ ^[0-9]+$ ]] || T_CRIT_H=""
-    [[ "$T_DE_H" =~ ^[0-9]+$ ]] || T_DE_H=""
-    [[ "$T_NUKE_H" =~ ^[0-9]+$ ]] || T_NUKE_H=""
+    mapfile -t USER_CRIT < <(parse_bash_array "$SETTINGS_CONF" "USER_CRITICAL_PKGS")
+    [[ ${#USER_CRIT[@]} -gt 0 ]] && CRITICAL_PKGS+=("${USER_CRIT[@]}")
 
-    if ! grep -q "T_MIRROR_H=" "$SETTINGS_CONF"; then
-            cat <<EOF >> "$SETTINGS_CONF"
+    mapfile -t USER_FEAT < <(parse_bash_array "$SETTINGS_CONF" "USER_FEATURE_PKGS")
+    [[ ${#USER_FEAT[@]} -gt 0 ]] && FEATURE_PKGS+=("${USER_FEAT[@]}")
 
-# Minimum age for ANY package (allows mirrors to fully sync). Integers only.
-T_MIRROR_H=3
+    mapfile -t CUSTOM_CMDS < <(parse_bash_array "$SETTINGS_CONF" "CUSTOM_CMDS")
 
-# Delay for FEATURE packages (e.g., pipewire, networkmanager). Integers only.
-T_FEAT_H=6
-
-# Delay for CRITICAL packages (e.g., base, mesa, xorg, wayland). Integers only.
-T_CRIT_H=12
-
-# Delay for Desktop Environments (e.g., Plasma, Gnome, Hyprland). Integers only.
-T_DE_H=12
-
-# Delay for NUCLEAR / Core system packages (e.g., linux, glibc, systemd). Integers only.
-T_NUKE_H=24
-
-# If true, updates identified as "Patch" (e.g., minor bugfixes or pkgrel rebuilds)
-# will ignore their category timers (like 24h for NUKE) and will only
-# wait for the base T_MIRROR_H timer (3h by default) to ensure mirrors are synced.
-IGNORE_PATCH_TIMERS=true
-EOF
-        fi
+    [[ "$T_MIRROR_H" =~ ^[0-9]+$ ]] || T_MIRROR_H=3
+    [[ "$T_FEAT_H" =~ ^[0-9]+$ ]] || T_FEAT_H=6
+    [[ "$T_CRIT_H" =~ ^[0-9]+$ ]] || T_CRIT_H=12
+    [[ "$T_DE_H" =~ ^[0-9]+$ ]] || T_DE_H=12
+    [[ "$T_NUKE_H" =~ ^[0-9]+$ ]] || T_NUKE_H=24
 fi
 
+: ${ENABLE_BACKGROUND_CHECK:=false}
+: ${CHECK_INTERVAL:=30min}
+: ${START_DELAY:=5min}
+: ${GENERATE_LOGS:=false}
+: ${MAX_LOG_NUMBERS:=5}
 : ${T_MIRROR_H:=3}
 : ${T_FEAT_H:=6}
 : ${T_CRIT_H:=12}
@@ -302,6 +337,97 @@ for pkg in "${CRITICAL_PKGS[@]}"; do CRIT_MAP["$pkg"]=1; done
 
 declare -A FEAT_MAP
 for pkg in "${FEATURE_PKGS[@]}"; do FEAT_MAP["$pkg"]=1; done
+
+sync_daemon_state() {
+    [[ "$DAEMON_MODE" == true ]] && return 0
+
+    local SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$USER_HOME/.config}/systemd/user"
+
+    if [[ "${ENABLE_BACKGROUND_CHECK,,}" == "true" ]]; then
+        if ! command -v fakeroot >/dev/null 2>&1; then
+            echo -e "${yellow}Background check requires 'fakeroot' (install base-devel). Disabling daemon.${reset}"
+            ENABLE_BACKGROUND_CHECK="false"
+            if systemctl --user is-active --quiet arch-smart-update.timer 2>/dev/null || [[ -f "$SYSTEMD_USER_DIR/arch-smart-update.timer" ]]; then
+                systemctl --user disable --now arch-smart-update.timer >/dev/null 2>&1
+                rm -f "$SYSTEMD_USER_DIR/arch-smart-update.service" "$SYSTEMD_USER_DIR/arch-smart-update.timer"
+                systemctl --user daemon-reload >/dev/null 2>&1
+            fi
+            return 0
+        fi
+        mkdir -p "$SYSTEMD_USER_DIR"
+
+        if [[ -f "$DAEMON_TEMPLATE" ]]; then
+            local SCRIPT_PATH=$(realpath "$(command -v "$0" || echo "$0")")
+            local TMP_SVC=$(mktemp) TMP_TMR=$(mktemp)
+
+            awk -v script="$SCRIPT_PATH" -v delay="$START_DELAY" -v interval="$CHECK_INTERVAL" -v svc="$TMP_SVC" -v tmr="$TMP_TMR" '
+                /^\[TimerTemplate\]/ { in_timer=1; next }
+                {
+                    gsub(/__SCRIPT_PATH__/, "\"" script "\"")
+                    gsub(/__START_DELAY__/, delay)
+                    gsub(/__CHECK_INTERVAL__/, interval)
+
+                    if (in_timer) print > tmr
+                    else print > svc
+                }
+            ' "$DAEMON_TEMPLATE"
+
+            if ! cmp -s "$TMP_SVC" "$SYSTEMD_USER_DIR/arch-smart-update.service" || ! cmp -s "$TMP_TMR" "$SYSTEMD_USER_DIR/arch-smart-update.timer"; then
+                mv "$TMP_SVC" "$SYSTEMD_USER_DIR/arch-smart-update.service"
+                mv "$TMP_TMR" "$SYSTEMD_USER_DIR/arch-smart-update.timer"
+                chmod 644 "$SYSTEMD_USER_DIR/arch-smart-update.service" "$SYSTEMD_USER_DIR/arch-smart-update.timer"
+                systemctl --user daemon-reload >/dev/null 2>&1
+                systemctl --user enable --now arch-smart-update.timer >/dev/null 2>&1
+            else
+                rm -f "$TMP_SVC" "$TMP_TMR"
+            fi
+        fi
+    else
+        if systemctl --user is-active --quiet arch-smart-update.timer 2>/dev/null || [[ -f "$SYSTEMD_USER_DIR/arch-smart-update.timer" ]]; then
+            systemctl --user disable --now arch-smart-update.timer >/dev/null 2>&1
+            rm -f "$SYSTEMD_USER_DIR/arch-smart-update.service" "$SYSTEMD_USER_DIR/arch-smart-update.timer"
+            systemctl --user daemon-reload >/dev/null 2>&1
+        fi
+    fi
+}
+
+sync_daemon_state
+
+if [[ "${GENERATE_LOGS,,}" == "true" ]]; then
+    LOG_DIR="$CONFIG_DIR/logs"
+    mkdir -p "$LOG_DIR"
+
+    latest_log=$(ls -1 "$LOG_DIR"/log_* 2>/dev/null | grep -E 'log_[0-9]+$' | sort -V | tail -n 1)
+    if [[ -z "$latest_log" ]]; then
+        next_num=1
+    else
+        latest_num="${latest_log##*_}"
+        next_num=$(( 10#$latest_num + 1 ))
+    fi
+
+    printf -v log_name "log_%06d" "$next_num"
+    LOG_FILE="$LOG_DIR/$log_name"
+
+    echo "=======================================================================" > "$LOG_FILE"
+    echo "Arch Smart Update Log" >> "$LOG_FILE"
+    echo "Time: $(date +'%Y-%m-%d %H:%M:%S')" >> "$LOG_FILE"
+    echo "Mode: $(if $DAEMON_MODE; then echo "Daemon (Background)"; else echo "Interactive"; fi)" >> "$LOG_FILE"
+    echo "=======================================================================" >> "$LOG_FILE"
+
+    if $DAEMON_MODE; then
+        exec >> "$LOG_FILE" 2>&1
+    else
+        exec > >(tee -a "$LOG_FILE") 2>&1
+    fi
+
+    existing_logs=( $(ls -1 "$LOG_DIR"/log_[0-9][0-9][0-9][0-9][0-9][0-9] 2>/dev/null | sort -V) )
+    if (( ${#existing_logs[@]} > MAX_LOG_NUMBERS )); then
+        remove_count=$(( ${#existing_logs[@]} - MAX_LOG_NUMBERS ))
+        for (( i=0; i<remove_count; i++ )); do
+            rm -f "${existing_logs[$i]}"
+        done
+    fi
+fi
 
 # --- 3. Temporary Files ---
 OUTPUT_FILE=$(mktemp)
@@ -325,7 +451,7 @@ cleanup() {
             sudo -n rm -rf -- "$CHECK_DB" 2>/dev/null
 
             if [[ -d "$CHECK_DB" ]]; then
-                echo -e "\n\r\033[2K${yellow}⚠ Cleaning up temporary RAM files (/tmp)... Password required.${reset}"
+                echo -e "\n\r\033[2K${yellow}Cleaning up temporary RAM files (/tmp)... Password required.${reset}"
                 sudo rm -rf -- "$CHECK_DB"
             fi
         fi
@@ -419,7 +545,7 @@ get_type_color() {
 
 check_arch_news() {
     log_step "Starting Arch News check (Python)..."
-    echo -ne "${gray}  Checking Arch News... ${reset}"
+    echo -ne "${gray}Checking Arch News... ${reset}"
 
     if news_ts=$(python3 -c "
 import sys, urllib.request, xml.etree.ElementTree as ET, email.utils
@@ -441,13 +567,27 @@ except Exception:
         diff_hours=$(( (now_time - news_ts) / 3600 ))
 
         if (( diff_hours < 336 )); then # 14 days
-            echo -e "\r\033[2K${red}${bold}  ⚠ WARNING: Fresh Arch News detected ($diff_hours h ago)!${reset}"
-            echo -e "  ${red}  Check https://archlinux.org/ before updating.${reset}\n"
+            echo -e "\r\033[2K${red}${bold}WARNING: Fresh Arch News detected ($diff_hours h ago)!${reset}"
+            echo -e "  ${red}Check https://archlinux.org/ before updating.${reset}\n"
+
+            if [[ "$DAEMON_MODE" == true ]]; then
+                NEWS_CACHE="${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-news-cache-${USER:-$(id -un)}"
+                OLD_NEWS_TS=0
+                [[ -f "$NEWS_CACHE" ]] && OLD_NEWS_TS=$(cat "$NEWS_CACHE" 2>/dev/null)
+
+                if (( news_ts != OLD_NEWS_TS )); then
+                    if command -v notify-send >/dev/null 2>&1; then
+                        notify-send -a "Arch Smart Update" -u critical -i dialog-warning \
+                            "Attention: Arch News detected ($diff_hours h. ago)!\nCheck archlinux.org."
+                    fi
+                    echo "$news_ts" > "$NEWS_CACHE"
+                fi
+            fi
         else
-            echo -e "\r\033[2K${green}  ✔ No fresh Arch News (last: ${diff_hours}h ago).${reset}\n"
+            echo -e "\r\033[2K${green}No fresh Arch News (last: ${diff_hours}h ago).${reset}\n"
         fi
     else
-        echo -e "\r\033[2K${dim}  ? Could not check Arch News (Connection or XML error).${reset}\n"
+        echo -e "\r\033[2K${dim}Could not check Arch News (Connection or XML error).${reset}\n"
     fi
 }
 
@@ -465,11 +605,11 @@ backup_pacman_db() {
     local BACKUP_FILE="$BACKUP_DIR/pacman_database_$BACKUP_DATE.tar.gz"
 
     if sudo tar --xattrs --warning=no-file-changed -czf "$BACKUP_FILE" -C /var/lib/pacman/ local; then
-        echo -e "  ${green}✔ Backup created: ${white}$(basename "$BACKUP_FILE")${reset}"
+        echo -e "  ${green}Backup created: ${white}$(basename "$BACKUP_FILE")${reset}"
 
         (cd "$BACKUP_DIR" && ls -tp pacman_database_*.tar.gz | grep -v '/$' | tail -n +$((KEEP_COPIES + 1)) | xargs -I {} sudo rm -- {})
     else
-        echo -e "  ${red}✘ Failed to create backup!${reset}"
+        echo -e "  ${red}Failed to create backup!${reset}"
         echo -ne "  ${yellow}Continue anyway? [y/N]: ${reset}"
         read -r cont
         if [[ ! "$cont" =~ ^[Yy]$ ]]; then
@@ -486,6 +626,9 @@ get_current_mirror() {
 }
 
 refresh_mirrors() {
+    if [[ "$DAEMON_MODE" == true ]]; then
+        return 1
+    fi
     local reason="${1:-Mirror instability detected (timeouts or errors).}"
 
     local mirror_list="/etc/pacman.d/mirrorlist"
@@ -515,14 +658,11 @@ refresh_mirrors() {
         fi
     fi
 
-    local CUSTOM_REFLECTOR=""
-    if [[ -n "$REFL_CONF" && -f "$REFL_CONF" ]]; then
-        CUSTOM_REFLECTOR=$(grep -v '^#' "$REFL_CONF" 2>/dev/null | grep '[^[:space:]]' | head -n 1)
-    fi
+    local CUSTOM_REFLECTOR="${CUSTOM_REFLECTOR_CMD:-}"
     local DEFAULT_REFLECTOR="sudo reflector --country Germany,Netherlands,France,Norway --protocol https --age 12 --latest 50 --number 20 --sort rate --save /etc/pacman.d/mirrorlist --download-timeout 10"
     local ACTUAL_CMD="${CUSTOM_REFLECTOR:-$DEFAULT_REFLECTOR}"
 
-    echo -e "\n${yellow}${bold}⚠  $reason${reset}"
+    echo -e "\n${yellow}${bold}!  $reason${reset}"
     echo -e "  ${dim}Current mirror: ${white}$current_mirror${dim} (Last ranked: $mirror_age)${reset}"
     echo -e "  ${dim}Command: ${white}$ACTUAL_CMD${reset}"
     echo -e "  ${dim}Can be changed in the reflector.conf file.${reset}"
@@ -531,25 +671,25 @@ refresh_mirrors() {
     if [[ "$ans" =~ ^[Yy]$ || -z "$ans" ]]; then
 
         if command -v eos-rankmirrors &>/dev/null; then
-            echo -e "  ${blue}󰚰  Ranking EndeavourOS mirrors (Timeout: 5s)...${reset}"
+            echo -e "  ${blue}Ranking EndeavourOS mirrors (Timeout: 5s)...${reset}"
             if sudo eos-rankmirrors -t 5 > /dev/null; then
-                echo -e "  ${green}  ✔ EndeavourOS mirrors updated.${reset}"
+                echo -e "  ${green}EndeavourOS mirrors updated.${reset}"
             else
-                echo -e "  ${red}  ✘ Failed to rank EOS mirrors.${reset}"
+                echo -e "  ${red}Failed to rank EOS mirrors.${reset}"
             fi
         fi
 
         if command -v cachyos-rate-mirrors &>/dev/null; then
-            echo -e "  ${blue}󰚰  Ranking CachyOS mirrors...${reset}"
+            echo -e "  ${blue}Ranking CachyOS mirrors...${reset}"
             if sudo cachyos-rate-mirrors; then
-                echo -e "  ${green}  ✔ CachyOS mirrors updated.${reset}"
+                echo -e "  ${green}CachyOS mirrors updated.${reset}"
             else
-                echo -e "  ${red}  ✘ Failed to rank CachyOS mirrors.${reset}"
+                echo -e "  ${red}Failed to rank CachyOS mirrors.${reset}"
             fi
         fi
 
         if command -v reflector &>/dev/null; then
-            echo -e "\n  ${blue}󰚰  Running reflector for Arch Linux...${reset}"
+            echo -e "\n  ${blue}Running reflector for Arch Linux...${reset}"
 
             local REFL_SUCCESS=false
 
@@ -563,15 +703,15 @@ refresh_mirrors() {
                 err_count=$(grep -cEi "warning: failed to rate|timed out|error" "$REFL_LOG" 2>/dev/null || true)
 
                 if [[ $exit_code -ne 0 ]] && (( err_count >= 15 )); then
-                    echo -e "\n${yellow}⚠ Reflector has encountered problems: $err_count mirrors are unavailable or have timed out.${reset}"
-                    echo -e "${yellow}Perhaps the connection is unstable, or the mirrors are currently down.${reset}"
+                    echo -e "\n${yellow}Reflector has encountered problems: $err_count mirrors are unavailable or have timed out.${reset}"
+                    echo -e "${yellow}The connection might be unstable, or the mirrors are currently down.${reset}"
 
                     local force_cont
-                    echo -ne "  ${white}Continue with the old mirrorlist anyway? [N/y]: ${reset}"
+                    echo -ne "  ${white}Continue with the old mirrorlist anyway? [y/N]: ${reset}"
                     read -r force_cont
 
                     if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
-                        echo -e "${red}✘ The update was interrupted by the user.${reset}"
+                        echo -e "${red}The update was interrupted by the user.${reset}"
                         exit 1
                     fi
 
@@ -582,40 +722,40 @@ refresh_mirrors() {
             }
 
             if [[ -n "$CUSTOM_REFLECTOR" ]]; then
-                echo -e "  ${dim}  Executing custom reflector command...${reset}"
+                echo -e "  ${dim}Executing custom reflector command...${reset}"
                 run_refl_and_check "$CUSTOM_REFLECTOR"
                 local refl_res=$?
                 if [[ $refl_res -eq 0 ]]; then
                     local new_mirror=$(get_current_mirror)
-                    echo -e "  ${green}  ✔ Custom Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
+                    echo -e "  ${green}Custom Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
                     REFL_SUCCESS=true
                 elif [[ $refl_res -eq 255 ]]; then
-                    echo -e "  ${yellow}  ⚠ Proceeding with old mirrors...${reset}\n"
+                    echo -e "  ${yellow}Proceeding with old mirrors...${reset}\n"
                     return 0
                 else
-                    echo -e "  ${yellow}  ⚠ Custom reflector command failed. Falling back to default...${reset}"
+                    echo -e "  ${yellow}Custom reflector command failed. Falling back to default...${reset}"
                 fi
             fi
 
             if ! $REFL_SUCCESS; then
-                echo -e "  ${dim}  Ranking mirrors... WARNINGS ARE EXPECTED.${reset}"
+                echo -e "  ${dim}Ranking mirrors... WARNINGS ARE EXPECTED.${reset}"
                 run_refl_and_check "$DEFAULT_REFLECTOR"
                 local refl_res=$?
                 if [[ $refl_res -eq 0 ]]; then
                     local new_mirror=$(get_current_mirror)
-                    echo -e "  ${green}  ✔ Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
+                    echo -e "  ${green}Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
                     return 0
                 elif [[ $refl_res -eq 255 ]]; then
-                    echo -e "  ${yellow}  ⚠ Proceeding with old mirrors...${reset}\n"
+                    echo -e "  ${yellow}Proceeding with old mirrors...${reset}\n"
                     return 0
                 else
-                    echo -e "  ${red}  ✘ Reflector failed (Try changing the reflector.conf settings).${reset}\n"
+                    echo -e "  ${red}Reflector failed (Try changing the reflector.conf settings).${reset}\n"
                     return 1
                 fi
             fi
             return 0
         else
-            echo -e "  ${red}✘ Error: 'reflector' is not installed.${reset}\n"
+            echo -e "  ${red}Error: 'reflector' is not installed.${reset}\n"
             return 1
         fi
     fi
@@ -624,25 +764,27 @@ refresh_mirrors() {
 
 # --- 6. Main Logic ---
 log_step "Requesting Sudo access..."
-if ! sudo -v; then
-    echo -e "${red}Error: Sudo authentication failed.${reset}"
-    exit 1
-fi
+if ! $DAEMON_MODE; then
+    if ! sudo -v; then
+        echo -e "${red}Error: Sudo authentication failed.${reset}"
+        exit 1
+    fi
 
-(
-    while kill -0 "$$" 2>/dev/null; do
-        sudo -n true 2>/dev/null
-        sleep 60
-    done
-) &
-SUDO_KEEP_ALIVE_PID=$!
+    (
+        while kill -0 "$$" 2>/dev/null; do
+            sudo -n true 2>/dev/null
+            sleep 60
+        done
+    ) &
+    SUDO_KEEP_ALIVE_PID=$!
+fi
 
 AUR_HELPER=""
 if [[ -n "${AUR_HELPER_OVERRIDE:-}" ]]; then
     if command -v "$AUR_HELPER_OVERRIDE" &>/dev/null; then
         AUR_HELPER="$AUR_HELPER_OVERRIDE"
     else
-        echo -e "${yellow}  ⚠ Warning: Override AUR helper '$AUR_HELPER_OVERRIDE' not found. Falling back to auto-detect.${reset}"
+        echo -e "${yellow}Warning: Override AUR helper '$AUR_HELPER_OVERRIDE' not found. Falling back to auto-detect.${reset}"
         if command -v paru &>/dev/null; then AUR_HELPER="paru"
         elif command -v yay &>/dev/null; then AUR_HELPER="yay"
         fi
@@ -651,22 +793,23 @@ elif command -v paru &>/dev/null; then AUR_HELPER="paru"
 elif command -v yay &>/dev/null; then AUR_HELPER="yay"
 fi
 
-echo -e "\n${blue}${bold}  󰚰  Checking for updates...${reset}"
+echo -e "\n${blue}${bold}Checking for updates...${reset}"
 
 if [[ -f /var/lib/pacman/db.lck ]]; then
+    if $DAEMON_MODE; then exit 0; fi
     if sudo fuser /var/lib/pacman/db.lck >/dev/null 2>&1; then
         echo -e "${red}Error: Pacman database is locked (/var/lib/pacman/db.lck).${reset}"
         echo -e "${yellow}Another package manager process is running.${reset}"
         exit 1
     else
-        echo -e "${yellow}⚠  Stale lock file found (/var/lib/pacman/db.lck), but no active process detected.${reset}"
+        echo -e "${yellow}Stale lock file found (/var/lib/pacman/db.lck), but no active process detected.${reset}"
         echo -ne "  ${white}Remove the stale lock file and continue? [y/N]: ${reset}"
         read -r rm_lock
         if [[ "$rm_lock" =~ ^[Yy]$ ]]; then
             sudo rm /var/lib/pacman/db.lck
-            echo -e "${green}✔  Lock file removed. Proceeding...${reset}"
+            echo -e "${green}Lock file removed. Proceeding...${reset}"
         else
-            echo -e "${red}✘ Update aborted by user (database locked).${reset}"
+            echo -e "${red}Update aborted by user (database locked).${reset}"
             exit 1
         fi
     fi
@@ -689,15 +832,22 @@ if [[ -f "$MIRROR_LIST" ]]; then
     fi
 fi
 
+if $DAEMON_MODE; then
+    did_prompt_mirrors=true
+    PROMPT_MIRROR_REFRESH=false
+fi
+
 if [[ "$did_prompt_mirrors" == false ]] && [[ "${PROMPT_MIRROR_REFRESH,,}" == "true" ]]; then
-    refresh_mirrors "Pre-update mirror refresh is enabled in other_settings.conf."
+    refresh_mirrors "Pre-update mirror refresh is enabled in settings.conf."
 fi
 
 log_step "Copying local DB..."
-cp -a /var/lib/pacman/local "$CHECK_DB/" > /dev/null 2>&1
+cp -a --no-preserve=ownership /var/lib/pacman/local "$CHECK_DB/" > /dev/null 2>&1
 
-sudo chown -R root:root "$CHECK_DB"
-sudo chmod 755 "$CHECK_DB"
+if ! $DAEMON_MODE; then
+    sudo chown -R root:root "$CHECK_DB"
+    sudo chmod 755 "$CHECK_DB"
+fi
 
 MAX_RETRIES=1
 attempt=0
@@ -706,10 +856,18 @@ while (( attempt <= MAX_RETRIES )); do
     log_step "Syncing temporary database (pacman -Sy)..."
 
     set -o pipefail
-    if sudo pacman -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
-        PACMAN_EXIT=0
+    if $DAEMON_MODE; then
+        if fakeroot pacman -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
+            PACMAN_EXIT=0
+        else
+            PACMAN_EXIT=$?
+        fi
     else
-        PACMAN_EXIT=$?
+        if sudo pacman -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
+            PACMAN_EXIT=0
+        else
+            PACMAN_EXIT=$?
+        fi
     fi
     set +o pipefail
 
@@ -733,11 +891,12 @@ while (( attempt <= MAX_RETRIES )); do
         fi
 
         if (( err_count >= 15 )); then
-            echo -e "\n${yellow}⚠ The selected mirror might not be optimal.${reset}"
+            if $DAEMON_MODE; then exit 1; fi
+            echo -e "\n${yellow}The selected mirror might not be optimal.${reset}"
             echo -ne "  ${white}Continue anyway? [y/N]: ${reset}"
             read -r force_cont
             if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
-                echo -e "${red}✘ Update aborted by user.${reset}"
+                echo -e "${red}Update aborted by user.${reset}"
                 exit 1
             fi
             break
@@ -755,7 +914,9 @@ done
 
 log_step "Calculating update list (pacman -Qu)..."
 
-sudo chown -R $(id -un):$(id -gn) "$CHECK_DB"
+if ! $DAEMON_MODE; then
+    sudo chown -R $(id -un):$(id -gn) "$CHECK_DB"
+fi
 
 ignored_pkgs=$(pacman-conf IgnorePkg 2>/dev/null | tr ' ' '\n')
 ignored_groups=$(pacman-conf IgnoreGroup 2>/dev/null | tr ' ' '\n')
@@ -778,20 +939,13 @@ fi
 
 ignored_updates=""
 if [[ -n "$ignored_pkgs" ]]; then
-    extract_ignored_awk='
-        BEGIN { split(ig, a, "\n"); for (i in a) if(a[i] != "") ign[a[i]]=1 }
-        { if (ign[$1]) print $0 }
-    '
-    all_raw_updates="$repo_updates"
-    [[ -n "$aur_updates" ]] && all_raw_updates="$all_raw_updates"$'\n'"$aur_updates"
-    ignored_updates=$(printf "%s\n" "$all_raw_updates" | awk -v ig="$ignored_pkgs" "$extract_ignored_awk" | sed '/^$/d')
+    awk_base='BEGIN { split(ig, a, "\n"); for (i in a) if(a[i] != "") ign[a[i]]=1 }'
 
-    filter_awk='
-        BEGIN { split(ig, a, "\n"); for (i in a) if(a[i] != "") ign[a[i]]=1 }
-        { if (!ign[$1]) print $0 }
-    '
-    [[ -n "$repo_updates" ]] && repo_updates=$(echo "$repo_updates" | awk -v ig="$ignored_pkgs" "$filter_awk")
-    [[ -n "$aur_updates" ]]  && aur_updates=$(echo "$aur_updates" | awk -v ig="$ignored_pkgs" "$filter_awk")
+    all_raw_updates=$(printf "%s\n%s" "$repo_updates" "$aur_updates" | sed '/^$/d')
+    ignored_updates=$(echo "$all_raw_updates" | awk -v ig="$ignored_pkgs" "$awk_base ign[\$1]")
+
+    [[ -n "$repo_updates" ]] && repo_updates=$(echo "$repo_updates" | awk -v ig="$ignored_pkgs" "$awk_base !ign[\$1]")
+    [[ -n "$aur_updates" ]]  && aur_updates=$(echo "$aur_updates" | awk -v ig="$ignored_pkgs" "$awk_base !ign[\$1]")
 fi
 
 repo_pkgs=""
@@ -805,15 +959,20 @@ updates="$repo_updates"
 updates=$(printf "%s\n" "$updates" | sed '/^$/d')
 
 if [[ -z "$updates" ]]; then
-    echo -e "${green}  ✔ System is fully up to date.${reset}\n"
+    echo -e "${green}System is fully up to date.${reset}\n"
 
     if [[ -n "$ignored_updates" ]]; then
-        echo -e "  ${magenta}${bold}󰏖 Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
+        echo -e "  ${magenta}${bold}Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
         while read -r pkg old_ver _ new_ver rest; do
             echo -e "    ${dim}- ${pkg}: ${gray}${old_ver}${reset} ${blue}→${reset} ${white}${new_ver}${reset}"
         done <<< "$ignored_updates"
         echo ""
     fi
+
+    if [[ "$DAEMON_MODE" == true ]]; then
+        rm -f "${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-notify-cache-${USER:-$(id -un)}"
+    fi
+
     exit 0
 fi
 
@@ -835,7 +994,7 @@ if [[ -n "$ignored_updates" ]]; then
                 [[ -z "$dependency_warnings" ]] && dependency_warnings=$(echo "$sim_out" | sed 's/^/    /')
             fi
         else
-            sim_error_warning="    ${yellow}⚠ The update simulation failed due to a transaction error.${reset}\n${dim}$(echo "$sim_out" | sed 's/^/      /')${reset}"
+            sim_error_warning="    ${yellow}The update simulation failed due to a transaction error.${reset}\n${dim}$(echo "$sim_out" | sed 's/^/      /')${reset}"
         fi
     fi
 fi
@@ -848,57 +1007,42 @@ else
 fi
 
 log_step "Found $pkg_count updates ($aur_count from AUR). Starting detailed analysis..."
-echo -e "${blue}${bold}  󰑮  Analyzing updates: ${white}$pkg_count packages${reset}"
+echo -e "${blue}${bold}Analyzing updates: ${white}$pkg_count packages${reset}"
 
 all_pkgs=$(echo "$updates" | awk '{print $1}')
 
 log_step "Fetching remote metadata (pacman -Si)..."
 declare -A NEW_DATA
 
-parse_pacman_si() {
-    awk '
+parse_metadata() {
+    local default_repo="$1"
+    awk -v def_repo="$default_repo" '
         /^Name[ \t]*:/ {n=$0; sub(/^[^:]*:[ \t]*/, "", n)}
         /^Repository[ \t]*:/ {r=$0; sub(/^[^:]*:[ \t]*/, "", r)}
-        /^Build Date[ \t]*:/ {b=$0; sub(/^[^:]*:[ \t]*/, "", b)}
+        /^(Build Date|Last Modified)[ \t]*:/ {b=$0; sub(/^[^:]*:[ \t]*/, "", b)}
         /^Download Size[ \t]*:/ {s=$0; sub(/^[^:]*:[ \t]*/, "", s)}
         /^Description[ \t]*:/ {d=$0; sub(/^[^:]*:[ \t]*/, "", d); gsub(/[|\t~]/, " ", d)}
         /^$/ {
             if (n) {
-                print n "~|~" r "|" b "|" s "|" d
+                print n "~|~" (r ? r : def_repo) "|" b "|" (s ? s : "N/A") "|" d
                 n=""; r=""; b=""; s=""; d=""
             }
         }
-        END {if (n) print n "~|~" r "|" b "|" s "|" d}
+        END {if (n) print n "~|~" (r ? r : def_repo) "|" b "|" (s ? s : "N/A") "|" d}
     '
 }
 
 if [[ -n "$repo_pkgs" ]]; then
     while IFS='' read -r line; do
-        name=${line%%~|~*}
-        rest=${line#*~|~}
-        NEW_DATA["$name"]="$rest"
-    done < <(echo "$repo_pkgs" | xargs env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never 2>/dev/null | parse_pacman_si)
+        NEW_DATA["${line%%~|~*}"]="${line#*~|~}"
+    done < <(echo "$repo_pkgs" | xargs env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never 2>/dev/null | parse_metadata "")
 fi
 
 if [[ -n "$aur_pkgs" && -n "$AUR_HELPER" ]]; then
     log_step "Fetching AUR metadata..."
     while IFS='' read -r line; do
-        name=${line%%~|~*}
-        rest=${line#*~|~}
-        NEW_DATA["$name"]="$rest"
-    done < <(echo "$aur_pkgs" | xargs env LC_ALL=C $AUR_HELPER -Si 2>/dev/null | awk '
-        /^Name[ \t]*:/ {n=$0; sub(/^[^:]*:[ \t]*/, "", n)}
-        /^Repository[ \t]*:/ {r="AUR"}
-        /^Last Modified[ \t]*:/ {b=$0; sub(/^[^:]*:[ \t]*/, "", b)}
-        /^Description[ \t]*:/ {d=$0; sub(/^[^:]*:[ \t]*/, "", d); gsub(/[|\t~]/, " ", d)}
-        /^$/ {
-            if (n) {
-                print n "~|~" (r ? r : "AUR") "|" b "|N/A|" d
-                n=""; r=""; b=""; d=""
-            }
-        }
-        END {if (n) print n "~|~" (r ? r : "AUR") "|" b "|N/A|" d}
-    ')
+        NEW_DATA["${line%%~|~*}"]="${line#*~|~}"
+    done < <(echo "$aur_pkgs" | xargs env LC_ALL=C $AUR_HELPER -Si 2>/dev/null | parse_metadata "AUR")
 fi
 
 log_step "Fetching local metadata (pacman -Qi)..."
@@ -960,14 +1104,16 @@ while read -r pkgname old_ver _ new_ver _rest; do
     ((current_idx++))
     percent=$(( current_idx * 100 / pkg_count ))
 
-    if (( percent % 5 == 0 || current_idx == pkg_count )); then
-        filled=$(( percent / 5 ))
-        empty=$(( 20 - filled ))
-        printf "\r\033[2K  ${gray}Analysis: ${blue}["
-        printf "%${filled}s" | tr ' ' '='
-        printf ">"
-        printf "%${empty}s" | tr ' ' '-'
-        printf "] ${percent}%%${reset}"
+    if ! $DAEMON_MODE; then
+        if (( percent % 5 == 0 || current_idx == pkg_count )); then
+            filled=$(( percent / 5 ))
+            empty=$(( 20 - filled ))
+            printf "\r\033[2K  ${gray}Analysis: ${blue}["
+            printf "%${filled}s" | tr ' ' '='
+            printf ">"
+            printf "%${empty}s" | tr ' ' '-'
+            printf "] ${percent}%%${reset}"
+        fi
     fi
 
     IFS='|' read -r repo date_new size desc <<< "${NEW_DATA[$pkgname]}"
@@ -1291,13 +1437,14 @@ give_advice() {
     case $verdict_level in
         1) color=$yellow; verdict="REVIEW" ;;
         2) color=$red; verdict="HOLD" ;;
-        3) color="${red}${bold}"; verdict="⛔ DANGER" ;;
+        3) color="${red}${bold}"; verdict="DANGER" ;;
     esac
 
     printf "  ${bold}ADVISOR:${reset} "
 
     if (( max_wait_sec == 0 )); then
-        echo -e "${green}${bold}✅  GO FOR IT!${reset} ${dim}(Packages have stabilized. Mirrors synced.)${reset}"
+        echo -e "${green}${bold}GO FOR IT!${reset} ${dim}(Packages have stabilized. Mirrors synced.)${reset}"
+        GLOBAL_ADVISOR_SAFE=true
     else
         local target_time=$(date -d "@$(( now + max_wait_sec ))" +%H:%M)
 
@@ -1308,7 +1455,7 @@ give_advice() {
         (( wait_h > 0 )) && dur_str+="${wait_h}h "
         dur_str+="${wait_m}m"
 
-        echo -e "${color}${bold}$verdict${reset} ${white}→ Recommend waiting until ${bold}$target_time${reset} ($dur_str)"
+        echo -e "${color}${bold}$verdict${reset} ${white}Recommend waiting until ${bold}$target_time${reset} ($dur_str)"
 
         if (( ${#reasons[@]} > 0 )); then
              echo -ne "           ${dim}Reason: ${reasons[0]}${reset}"
@@ -1317,6 +1464,7 @@ give_advice() {
              done
              echo ""
         fi
+        GLOBAL_ADVISOR_SAFE=false
     fi
     echo -e "${dim}---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------${reset}"
 }
@@ -1324,21 +1472,37 @@ give_advice() {
 give_advice
 
 if [[ -n "$ignored_updates" ]]; then
-    echo -e "\n  ${magenta}${bold}󰏖 Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
+    echo -e "\n  ${magenta}${bold}Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
     while read -r pkg old_ver _ new_ver rest; do
         echo -e "    ${dim}- ${pkg}: ${gray}${old_ver}${reset} ${blue}→${reset} ${white}${new_ver}${reset}"
     done <<< "$ignored_updates"
 
     if [[ -n "$dependency_warnings" ]]; then
-        echo -e "\n  ${bg_nuke}${white}${bold} ⚠ DEPENDENCY BREAKAGE DETECTED ⚠ ${reset}"
+        echo -e "\n  ${bg_nuke}${white}${bold}DEPENDENCY BREAKAGE DETECTED ⚠ ${reset}"
         echo -e "  ${red}Updating now will likely abort because of unresolved dependencies!${reset}"
         echo -e "  ${gray}Pacman reports the following conflicts:${reset}"
         echo -e "${red}${dependency_warnings}${reset}\n"
     elif [[ -n "$sim_error_warning" ]]; then
         echo -e "\n${sim_error_warning}\n"
     else
-        echo -e "\n    ${green}✔ No dependency conflicts detected from skipped packages ${dim}(Official repos only)${green}.${reset}"
+        echo -e "\n    ${green}No dependency conflicts detected from skipped packages ${dim}(Official repos only)${green}.${reset}"
     fi
+fi
+
+if [[ "$DAEMON_MODE" == true ]]; then
+    CACHE_FILE="${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-notify-cache-${USER:-$(id -un)}"
+
+    if [[ "$GLOBAL_ADVISOR_SAFE" == true ]] && (( pkg_count > 0 )) && command -v notify-send >/dev/null 2>&1; then
+        OLD_COUNT=0
+        [[ -f "$CACHE_FILE" ]] && OLD_COUNT=$(cat "$CACHE_FILE" 2>/dev/null)
+
+        if (( pkg_count != OLD_COUNT )); then
+            notify-send -a "Arch Smart Update" -u normal -i software-update-available \
+                "Safe Updates Available\nFound $pkg_count updates ($aur_count AUR).\nReady to install."
+            echo "$pkg_count" > "$CACHE_FILE"
+        fi
+    fi
+    exit 0
 fi
 
 # --- 8. Update Request ---
@@ -1353,18 +1517,6 @@ check_pending_updates() {
     fi
     echo "$pending"
 }
-
-CUSTOM_CMDS=()
-
-if [[ -n "$CMD_CONF" && -f "$CMD_CONF" ]]; then
-    while IFS= read -r line; do
-        line="${line#"${line%%[![:space:]]*}"}"
-        line="${line%"${line##*[![:space:]]}"}"
-        if [[ -n "$line" && ! "$line" =~ ^# ]]; then
-            CUSTOM_CMDS+=("$line")
-        fi
-    done < "$CMD_CONF"
-fi
 
 HAS_EOS=false
 HAS_TOPGRADE=false
@@ -1404,41 +1556,41 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     UPDATE_SUCCESS=false
 
     if [[ ${#CUSTOM_CMDS[@]} -gt 0 ]]; then
-        echo -e "${blue}${bold}  󰚰  Running custom update commands...${reset}\n"
+        echo -e "${blue}${bold}Running custom update commands...${reset}\n"
         UPDATE_SUCCESS=true
 
         for cmd in "${CUSTOM_CMDS[@]}"; do
-            echo -e "  ${dim}➜ Executing: ${white}$cmd${reset}"
+            echo -e "  ${dim}Executing: ${white}$cmd${reset}"
             bash -c "$cmd"
             core_exit=$?
 
             if [[ $core_exit -ne 0 ]]; then
                 UPDATE_SUCCESS=false
-                echo -e "\n${red}  ✘ Command failed with exit code $core_exit: $cmd${reset}"
+                echo -e "\n${red}Command failed with exit code $core_exit: $cmd${reset}"
                 break
             fi
         done
 
         if $UPDATE_SUCCESS; then
             if [[ -n "$(check_pending_updates)" ]]; then
-                echo -e "\n${yellow}  ⚠ Custom commands finished successfully, but standard pacman updates were skipped.${reset}"
+                echo -e "\n${yellow}Custom commands finished successfully, but standard pacman updates were skipped.${reset}"
                 echo -e "  ${dim}Make sure your custom commands include a package manager update (e.g., 'paru -Syu').${reset}"
             fi
         fi
 
     elif $HAS_EOS && $HAS_TOPGRADE; then
-        echo -e "${blue}${bold}  󰚰  Running eos-update (Keyrings & Packages)...${reset}\n"
+        echo -e "${blue}${bold}Running eos-update (Keyrings & Packages)...${reset}\n"
         eos-update
         core_exit=$?
 
         pending_updates=$(check_pending_updates)
 
         if [[ -z "$pending_updates" && $core_exit -eq 0 ]]; then
-            echo -e "\n${green}✔ Core updates applied successfully.${reset}"
-            echo -e "\n${blue}${bold}  󰚰  Running Topgrade (Firmware, Flatpaks, Dotfiles)...${reset}\n"
+            echo -e "\n${green}Core updates applied successfully.${reset}"
+            echo -e "\n${blue}${bold}Running Topgrade (Firmware, Flatpaks, Dotfiles)...${reset}\n"
             topgrade && UPDATE_SUCCESS=true
         else
-            echo -e "\n${yellow}⚠  eos-update was cancelled or did not fully apply updates.${reset}"
+            echo -e "\n${yellow}eos-update was cancelled or did not fully apply updates.${reset}"
             echo -ne "  ${white}Run topgrade anyway? (Flatpaks/AUR etc) [y/N]: ${reset}"
             read -r force_extra
             if [[ "$force_extra" =~ ^[Yy]$ ]]; then
@@ -1456,11 +1608,11 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
         fi
 
     elif $HAS_TOPGRADE; then
-        echo -e "${blue}${bold}  󰚰  Running Topgrade (System, AUR, Firmware, etc.)...${reset}\n"
+        echo -e "${blue}${bold}Running Topgrade (System, AUR, Firmware, etc.)...${reset}\n"
         topgrade && UPDATE_SUCCESS=true
 
     else
-        echo -e "${blue}${bold}  󰚰  Running standard system update...${reset}\n"
+        echo -e "${blue}${bold}Running standard system update...${reset}\n"
         if [[ -n "$AUR_HELPER" ]]; then
             $AUR_HELPER -Syu
             core_exit=$?
@@ -1475,13 +1627,20 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     fi
 
     if $UPDATE_SUCCESS; then
-        echo -e "\n${green}✔ Update process finished successfully.${reset}\n"
+        rm -f "${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-notify-cache-${USER:-$(id -un)}"
+
+        if [[ "${ENABLE_BACKGROUND_CHECK,,}" == "true" ]]; then
+            systemctl --user restart arch-smart-update.timer >/dev/null 2>&1
+        fi
+
+        echo -e "\n${green}Update process finished successfully.${reset}\n"
     else
-        echo -e "\n${red}✘ Update process completed with errors, partial updates, or was cancelled.${reset}\n"
+        echo -e "\n${red}Update process completed with errors, partial updates, or was cancelled.${reset}\n"
     fi
 
 else
     echo -e "  ${yellow}Operation cancelled.${reset}\n"
 fi
 
+sleep 0.1
 exit 0
