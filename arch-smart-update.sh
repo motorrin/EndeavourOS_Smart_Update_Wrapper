@@ -137,11 +137,16 @@ parse_bash_array() {
         { gsub(/#.*/, "") }
         $0 ~ "^"var"(\\+)?=\\s*\\(" { in_arr=1; sub(/^.*\(/, "") }
         in_arr {
-            while (match($0, /"[^"]*"|\047[^\047]*\047/)) {
-                print substr($0, RSTART+1, RLENGTH-2)
+            if (match($0, /\)/)) {
+                $0 = substr($0, 1, RSTART-1)
+                in_arr=0
+            }
+            while (match($0, /"[^"]*"|\047[^\047]*\047|[^ \t\n\r"\047()]+/)) {
+                val = substr($0, RSTART, RLENGTH)
+                gsub(/^["\047]|["\047]$/, "", val)
+                if (val != "") print val
                 $0 = substr($0, RSTART+RLENGTH)
             }
-            if ($0 ~ /\)/) in_arr=0
         }
     ' "$file"
 }
@@ -169,7 +174,7 @@ migrate_old_configs() {
     if [[ -f "$old_ref" ]]; then
         local ref_cmd=$(grep -v '^#' "$old_ref" | grep '[^[:space:]]' | head -n 1)
         if [[ -n "$ref_cmd" ]]; then
-            local esc_ref=$(printf '%s\n' "$ref_cmd" | sed -e 's/[\/&]/\\&/g')
+            local esc_ref=$(printf '%s\n' "$ref_cmd" | sed -e 's/[|\/&]/\\&/g')
             sed -i "s|^# CUSTOM_REFLECTOR_CMD=.*|CUSTOM_REFLECTOR_CMD=\"${esc_ref}\"|" "$SETTINGS_CONF"
         fi
         migrated=true
@@ -283,16 +288,18 @@ FEATURE_PKGS=("pipewire" "plasma-desktop" "gnome-shell" "hyprland" "networkmanag
 CUSTOM_CMDS=()
 
 if [[ -f "$PKG_CONF" ]]; then
-    NUCLEAR_PKGS=($(parse_bash_array "$PKG_CONF" "NUCLEAR_PKGS"))
-    CRITICAL_PKGS=($(parse_bash_array "$PKG_CONF" "CRITICAL_PKGS"))
-    FEATURE_PKGS=($(parse_bash_array "$PKG_CONF" "FEATURE_PKGS"))
+    mapfile -t NUCLEAR_PKGS < <(parse_bash_array "$PKG_CONF" "NUCLEAR_PKGS")
+    mapfile -t CRITICAL_PKGS < <(parse_bash_array "$PKG_CONF" "CRITICAL_PKGS")
+    mapfile -t FEATURE_PKGS < <(parse_bash_array "$PKG_CONF" "FEATURE_PKGS")
 else
     echo -e "${red}Could not load packages.conf. Using built-in basic fallbacks.${reset}"
 fi
 
 if [[ -n "$SETTINGS_CONF" && -f "$SETTINGS_CONF" ]]; then
     while IFS='=' read -r key val; do
-        val="${val//[\"\'$'\r']/}"
+        val="${val%$'\r'}"
+        [[ "$val" == \"*\" || "$val" == \'*\' ]] && val="${val:1:-1}"
+
         case "$key" in
             AUR_HELPER_OVERRIDE|PROMPT_MIRROR_REFRESH|MAX_BACKUP_COPIES|CHECK_INTERVAL|START_DELAY|ENABLE_BACKGROUND_CHECK|T_MIRROR_H|T_FEAT_H|T_CRIT_H|T_DE_H|T_NUKE_H|IGNORE_PATCH_TIMERS|GENERATE_LOGS|MAX_LOG_NUMBERS|CUSTOM_REFLECTOR_CMD)
                 declare -g "$key=$val" ;;
@@ -341,6 +348,11 @@ for pkg in "${FEATURE_PKGS[@]}"; do FEAT_MAP["$pkg"]=1; done
 sync_daemon_state() {
     [[ "$DAEMON_MODE" == true ]] && return 0
 
+    if [[ "$EUID" -eq 0 ]]; then
+        echo -e "${yellow}Warning: Script run as root. Skipping systemd user daemon configuration.${reset}"
+        return 0
+    fi
+
     local SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$USER_HOME/.config}/systemd/user"
 
     if [[ "${ENABLE_BACKGROUND_CHECK,,}" == "true" ]]; then
@@ -360,12 +372,21 @@ sync_daemon_state() {
             local SCRIPT_PATH=$(realpath "$(command -v "$0" || echo "$0")")
             local TMP_SVC=$(mktemp) TMP_TMR=$(mktemp)
 
-            awk -v script="$SCRIPT_PATH" -v delay="$START_DELAY" -v interval="$CHECK_INTERVAL" -v svc="$TMP_SVC" -v tmr="$TMP_TMR" '
+            export SCRIPT_PATH START_DELAY CHECK_INTERVAL
+            awk -v svc="$TMP_SVC" -v tmr="$TMP_TMR" '
+                BEGIN {
+                    script = ENVIRON["SCRIPT_PATH"]
+                    delay = ENVIRON["START_DELAY"]
+                    interval = ENVIRON["CHECK_INTERVAL"]
+                }
                 /^\[TimerTemplate\]/ { in_timer=1; next }
                 {
-                    gsub(/__SCRIPT_PATH__/, "\"" script "\"")
-                    gsub(/__START_DELAY__/, delay)
-                    gsub(/__CHECK_INTERVAL__/, interval)
+                    while ((idx = index($0, "__SCRIPT_PATH__")) > 0)
+                        $0 = substr($0, 1, idx - 1) "\"" script "\"" substr($0, idx + 15)
+                    while ((idx = index($0, "__START_DELAY__")) > 0)
+                        $0 = substr($0, 1, idx - 1) delay substr($0, idx + 15)
+                    while ((idx = index($0, "__CHECK_INTERVAL__")) > 0)
+                        $0 = substr($0, 1, idx - 1) interval substr($0, idx + 18)
 
                     if (in_timer) print > tmr
                     else print > svc
@@ -578,7 +599,7 @@ except Exception:
                 if (( news_ts != OLD_NEWS_TS )); then
                     if command -v notify-send >/dev/null 2>&1; then
                         notify-send -a "Arch Smart Update" -u critical -i dialog-warning \
-                            "Attention: Arch News detected ($diff_hours h. ago)!\nCheck archlinux.org."
+                            "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating."
                     fi
                     echo "$news_ts" > "$NEWS_CACHE"
                 fi
@@ -815,6 +836,13 @@ if [[ -f /var/lib/pacman/db.lck ]]; then
     fi
 fi
 
+if [[ "$DAEMON_MODE" == true ]] && command -v gamemoded >/dev/null 2>&1; then
+    if gamemoded -status 2>/dev/null | grep -qi "is active"; then
+        log_step "GameMode is active. Background check postponed."
+        exit 0
+    fi
+fi
+
 check_arch_news
 
 MIRROR_LIST="/etc/pacman.d/mirrorlist"
@@ -862,13 +890,13 @@ while (( attempt <= MAX_RETRIES )); do
             PACMAN_OPTS="--disable-sandbox"
         fi
 
-        if fakeroot pacman $PACMAN_OPTS -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
+        if env LC_ALL=C fakeroot pacman $PACMAN_OPTS -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
             PACMAN_EXIT=0
         else
             PACMAN_EXIT=$?
         fi
     else
-        if sudo pacman -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
+        if env LC_ALL=C sudo pacman -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"; then
             PACMAN_EXIT=0
         else
             PACMAN_EXIT=$?
@@ -1040,21 +1068,21 @@ parse_metadata() {
 if [[ -n "$repo_pkgs" ]]; then
     while IFS='' read -r line; do
         NEW_DATA["${line%%~|~*}"]="${line#*~|~}"
-    done < <(echo "$repo_pkgs" | xargs env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never 2>/dev/null | parse_metadata "")
+    done < <(echo "$repo_pkgs" | xargs -r env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never 2>/dev/null | parse_metadata "")
 fi
 
 if [[ -n "$aur_pkgs" && -n "$AUR_HELPER" ]]; then
     log_step "Fetching AUR metadata..."
     while IFS='' read -r line; do
         NEW_DATA["${line%%~|~*}"]="${line#*~|~}"
-    done < <(echo "$aur_pkgs" | xargs env LC_ALL=C $AUR_HELPER -Si 2>/dev/null | parse_metadata "AUR")
+    done < <(echo "$aur_pkgs" | xargs -r env LC_ALL=C $AUR_HELPER -Si 2>/dev/null | parse_metadata "AUR")
 fi
 
 log_step "Fetching local metadata (pacman -Qi)..."
 declare -A OLD_DATA
 while IFS='|' read -r name bdate reason; do
     [[ -z "${OLD_DATA[$name]}" ]] && OLD_DATA["$name"]="$bdate|$reason"
-done < <(echo "$all_pkgs" | xargs env LC_ALL=C pacman -Qi 2>/dev/null | awk '
+done < <(echo "$all_pkgs" | xargs -r env LC_ALL=C pacman -Qi 2>/dev/null | awk '
     /^Name[ \t]*:/ {n=$0; sub(/^[^:]*:[ \t]*/, "", n)}
     /^Build Date[ \t]*:/ {b=$0; sub(/^[^:]*:[ \t]*/, "", b)}
     /^Install Reason[ \t]*:/ {r=$0; sub(/^[^:]*:[ \t]*/, "", r)}
@@ -1069,7 +1097,7 @@ done < <(echo "$all_pkgs" | xargs env LC_ALL=C pacman -Qi 2>/dev/null | awk '
 
 total_download_size="0.00 MiB"
 if [[ -n "$repo_pkgs" ]]; then
-    total_download_size=$(echo "$repo_pkgs" | xargs env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" 2>/dev/null | awk '
+    total_download_size=$(echo "$repo_pkgs" | xargs -r env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" 2>/dev/null | awk '
         /^Download Size[ \t]*:/ {
             sub(/^[^:]*:[ \t]*/, "")
 
@@ -1234,7 +1262,7 @@ printf "${bold}${gray}%s %s %s %s %s %s   %s %s %s %s${reset}\n" \
 
 printf "${dim}%s${reset}\n" "$sep_line"
 
-sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_type pkgname old_ver new_ver repo size is_explicit epoch_new fmt_date_new desc; do
+env LC_ALL=C sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_type pkgname old_ver new_ver repo size is_explicit epoch_new fmt_date_new desc; do
 
     if (( diff_hours == 9999 )); then age_disp="[?]"; age_col=$dim
     else
@@ -1282,10 +1310,11 @@ sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg_level upd_ty
     out_size="${white}${f_size}${reset}"
 
     if (( w_desc > 0 )); then
-        if (( ${#desc} > w_desc )); then
-            out_desc="${dim}${desc:0:$((w_desc-1))}…${reset}"
+        local safe_desc="${desc//\\/\\\\}"
+        if (( ${#safe_desc} > w_desc )); then
+            out_desc="${dim}${safe_desc:0:$((w_desc-1))}…${reset}"
         else
-            out_desc="${dim}${desc}${reset}"
+            out_desc="${dim}${safe_desc}${reset}"
         fi
     else
         out_desc=""
@@ -1503,7 +1532,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
 
         if (( pkg_count != OLD_COUNT )); then
             notify-send -a "Arch Smart Update" -u normal -i software-update-available \
-                "Safe Updates Available\nFound $pkg_count updates ($aur_count AUR).\nReady to install."
+                "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install."
             echo "$pkg_count" > "$CACHE_FILE"
         fi
     fi
