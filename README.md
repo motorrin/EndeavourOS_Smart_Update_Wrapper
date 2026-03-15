@@ -30,7 +30,7 @@
 - **🔒 Intelligent Lock File Removal:** Detects a stale `/var/lib/pacman/db.lck` file and uses `fuser` to check if a package manager is actually running. If it's a phantom lock, the script safely removes it for you.
 - **🚨 IgnorePkg Conflict Checker:** If you have frozen packages via `pacman.conf`, the script simulates the update in the background and warns you of any dependency breakages caused by skipped packages.
 - **🧩 Seamless Ecosystem Integration:** Full, native support for AUR helpers (`yay`, `paru`), as well as synergy with `eos-update` and `topgrade` to handle your Flatpaks, firmwares, and dotfiles.
-- **👻 Background Daemon & Notifications:** Run the script in the background using a user systemd timer. It silently checks for updates using `fakeroot` (no sudo required) and sends desktop notifications via `libnotify` when safe updates are ready or critical Arch News drops.
+- **👻 Background Daemon & Notifications:** You can allow the script to run in the background using a user systemd timer. It silently checks for updates using `fakeroot` (no sudo required) and sends desktop notifications via `libnotify` when safe updates are ready or critical Arch News drops.
 - **🎛️ Unified Configuration Management:** All custom commands, mirror overrides, behavior settings, and user package arrays are securely parsed from a single `settings.conf` file. Your personal settings are isolated from upstream defaults and will never be overwritten during script updates.
 
 ---
