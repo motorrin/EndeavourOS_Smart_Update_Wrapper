@@ -102,8 +102,10 @@ If you prefer not to use the AUR, you can install the script manually:
 3. `chmod +x arch-smart-update`
 
 ## ❓ How do I use this script?
+
 If you installed via AUR, the command is globally available as:  
-`arch-smart-update`  
+`arch-smart-update`
+
 If you installed Manually, the command is:  
 `~/arch-smart-update`
 
@@ -121,15 +123,31 @@ For fish:
 `nano ~/.config/fish/config.fish`
 
 ### 3. Add the alias to the very end of the file:
+
 If you installed via AUR:  
-`alias up="arch-smart-update"`  
+`alias up="arch-smart-update"`
+
 If you installed Manually:  
 `alias up="$HOME/arch-smart-update"`
 
 ### 4. Apply the changes immediately:
+
 For bash:  
 `source ~/.bashrc`  
 For zsh:  
 `source ~/.zshrc`  
 For fish:  
 `source ~/.config/fish/config.fish`
+
+## 🗑️ Uninstalling the Daemon
+
+If you decide to remove arch-smart-update and want to ensure no background tasks are left behind, please run these commands:
+
+1. Disable and stop the background timer:  
+`systemctl --user disable --now arch-smart-update.timer`
+
+2. Remove the systemd unit files:  
+`rm -f ~/.config/systemd/user/arch-smart-update.*`
+
+3. Reload systemd manager:  
+`systemctl --user daemon-reload`
