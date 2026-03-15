@@ -1317,7 +1317,7 @@ env LC_ALL=C sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg
     out_size="${white}${f_size}${reset}"
 
     if (( w_desc > 0 )); then
-        local safe_desc="${desc//\\/\\\\}"
+        safe_desc="${desc//\\/\\\\}"
         if (( ${#safe_desc} > w_desc )); then
             out_desc="${dim}${safe_desc:0:$((w_desc-1))}…${reset}"
         else
