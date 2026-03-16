@@ -1510,6 +1510,7 @@ give_advice() {
     echo -e "${dim}---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------${reset}"
 }
 
+GLOBAL_ADVISOR_SAFE=false
 give_advice
 
 if [[ -n "$ignored_updates" ]]; then
@@ -1538,7 +1539,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
         [[ -f "$CACHE_FILE" ]] && OLD_COUNT=$(cat "$CACHE_FILE" 2>/dev/null)
 
         if (( pkg_count != OLD_COUNT )); then
-            local notif_icon="software-update-available"
+            notif_icon="software-update-available"
             [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
 
             notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" \
