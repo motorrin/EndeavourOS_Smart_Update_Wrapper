@@ -100,7 +100,7 @@ For paru:
 `paru -S arch-smart-update`
 
 ## Option 2: Manual Installation
-If you are going to install the script manually, keep in mind that you will also have to manually download new versions to ensure stability:
+If you choose to install the script manually, keep in mind that you will also have to manually download new versions to ensure stability:
 
 1. `cd ~`  
 2. `curl -O https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/arch-smart-update.sh`  
@@ -144,15 +144,34 @@ For zsh:
 For fish:  
 `source ~/.config/fish/config.fish`
 
-## 🗑️ Uninstalling the Daemon
+## 🗑️ Uninstalling the script
 
-If you decide to remove arch-smart-update and want to ensure no background tasks are left behind, please run these commands:
+### 1. Make sure the background process is not running:
 
-1. Disable and stop the background timer:  
 `systemctl --user disable --now arch-smart-update.timer`
 
-2. Remove the systemd unit files:  
-`rm -f ~/.config/systemd/user/arch-smart-update.*`
+### 2. Remove the script (run one depending on your installation method):
 
-3. Reload systemd manager:  
+AUR:  
+`sudo pacman -Rns arch-smart-update`
+
+Manual *(if you downloaded it to a different folder, change the path accordingly)*:  
+`rm ~/arch-smart-update.sh`
+
+### 3. Remove configuration files, logs, and icon.
+
+`rm -rf ~/.config/arch-smart-update`
+
+### 4. Remove generated systemd files:
+
+`rm -f ~/.config/systemd/user/arch-smart-update.service`  
+`rm -f ~/.config/systemd/user/arch-smart-update.timer`  
 `systemctl --user daemon-reload`
+
+### 5. Delete Pacman database backups:
+
+`sudo rmdir /var/lib/pacman/backup`
+
+### 6. Clear temporary cache files in RAM:
+
+`rm -f ${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-*-cache-*`
