@@ -45,7 +45,7 @@ prompt_with_timeout() {
     local user_input=""
     if ! $DAEMON_MODE; then
         for (( i=timeout_sec; i>0; i-- )); do
-            echo -ne "\r\033[2K  ${white}${msg}[${options}] (${i}s): ${reset}"
+            echo -ne "\r\033[2K${white}${msg} [${options}] (${i}s): ${reset}"
             if read -t 1 -n 1 -r user_input </dev/tty 2>/dev/null; then break; else (( $? != 142 )) && break; fi
         done
         echo ""
@@ -217,7 +217,7 @@ migrate_old_configs() {
     fi
 
     if $migrated; then
-        echo -e "  ${green}Migration complete. Removing old configuration files.${reset}"
+        echo -e "${green}Migration complete. Removing old configuration files.${reset}"
         rm -f "$old_set" "$old_ref" "$old_cmd" "$old_pkg" \
               "$CONFIG_DIR/other_settings.default.conf" \
               "$CONFIG_DIR/reflector.default.conf" \
@@ -253,23 +253,23 @@ if [[ ! -f "$SETTINGS_CONF" && -f "$SETTINGS_DEFAULT" ]]; then
 
         if [[ "$setup_ans" =~ ^[Nn]$ ]]; then
             sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=false/' "$SETTINGS_CONF"
-            echo -e "  ${dim}Mirror ranking prompt disabled.${reset}"
+            echo -e "${dim}Mirror ranking prompt disabled.${reset}"
         else
             sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=true/' "$SETTINGS_CONF"
-            echo -e "  ${dim}Mirror ranking prompt enabled.${reset}"
+            echo -e "${dim}Mirror ranking prompt enabled.${reset}"
         fi
 
         if [[ "$daemon_ans" =~ ^[Yy]$ ]]; then
             sed -i 's/^ENABLE_BACKGROUND_CHECK=.*/ENABLE_BACKGROUND_CHECK=true/' "$SETTINGS_CONF"
-            echo -e "  ${dim}Background checker enabled.${reset}"
+            echo -e "${dim}Background checker enabled.${reset}"
             if ! pacman -Q libnotify >/dev/null 2>&1; then
-                echo -e "  ${yellow}Warning: The ${red}libnotify${yellow} package is not installed. Please install it for notifications to work.${reset}\n"
+                echo -e "${yellow}Warning: The ${red}libnotify${yellow} package is not installed. Please install it for notifications to work.${reset}\n"
             else
                 echo ""
             fi
         else
             sed -i 's/^ENABLE_BACKGROUND_CHECK=.*/ENABLE_BACKGROUND_CHECK=false/' "$SETTINGS_CONF"
-            echo -e "  ${dim}Background checker disabled.${reset}\n"
+            echo -e "${dim}Background checker disabled.${reset}\n"
         fi
     fi
 else
@@ -570,7 +570,7 @@ get_type_color() {
 
 check_arch_news() {
     log_step "Starting Arch News check (Python)..."
-    echo -ne "${gray}Checking Arch News... ${reset}"
+    echo -ne "${gray}Checking Arch News...${reset}"
 
     if news_ts=$(python3 -c "
 import sys, urllib.request, xml.etree.ElementTree as ET, email.utils
@@ -593,7 +593,7 @@ except Exception:
 
         if (( diff_hours < 336 )); then # 14 days
             echo -e "\r\033[2K${red}${bold}WARNING: Fresh Arch News detected ($diff_hours h ago)!${reset}"
-            echo -e "  ${red}Check https://archlinux.org/ before updating.${reset}\n"
+            echo -e "${red}Check https://archlinux.org/ before updating.${reset}\n"
 
             if [[ "$DAEMON_MODE" == true ]]; then
                 NEWS_CACHE="${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-news-cache-${USER:-$(id -un)}"
@@ -633,12 +633,12 @@ backup_pacman_db() {
     local BACKUP_FILE="$BACKUP_DIR/pacman_database_$BACKUP_DATE.tar.gz"
 
     if sudo tar --xattrs --warning=no-file-changed -czf "$BACKUP_FILE" -C /var/lib/pacman/ local; then
-        echo -e "  ${green}Backup created: ${white}$(basename "$BACKUP_FILE")${reset}"
+        echo -e "${green}Backup created: ${white}$(basename "$BACKUP_FILE")${reset}"
 
         (cd "$BACKUP_DIR" && ls -tp pacman_database_*.tar.gz | grep -v '/$' | tail -n +$((KEEP_COPIES + 1)) | xargs -I {} sudo rm -- {})
     else
-        echo -e "  ${red}Failed to create backup!${reset}"
-        echo -ne "  ${yellow}Continue anyway? [y/N]: ${reset}"
+        echo -e "${red}Failed to create backup!${reset}"
+        echo -ne "${yellow}Continue anyway? [y/N]: ${reset}"
         read -r cont
         if [[ ! "$cont" =~ ^[Yy]$ ]]; then
             exit 1
@@ -691,33 +691,33 @@ refresh_mirrors() {
     local ACTUAL_CMD="${CUSTOM_REFLECTOR:-$DEFAULT_REFLECTOR}"
 
     echo -e "\n${yellow}${bold}!  $reason${reset}"
-    echo -e "  ${dim}Current mirror: ${white}$current_mirror${dim} (Last ranked: $mirror_age)${reset}"
-    echo -e "  ${dim}Command: ${white}$ACTUAL_CMD${reset}"
-    echo -e "  ${dim}Can be changed in the reflector.conf file.${reset}"
-    echo -ne "  ${white}Refresh mirrors now? [Y/n]: ${reset}"
+    echo -e "${dim}Current mirror: ${white}$current_mirror${dim} (Last ranked: $mirror_age)${reset}"
+    echo -e "${dim}Command: ${white}$ACTUAL_CMD${reset}"
+    echo -e "${dim}Can be changed in the settings.conf file.${reset}"
+    echo -ne "${white}Refresh mirrors now? [Y/n]: ${reset}"
     read -r ans
     if [[ "$ans" =~ ^[Yy]$ || -z "$ans" ]]; then
 
         if command -v eos-rankmirrors &>/dev/null; then
-            echo -e "  ${blue}Ranking EndeavourOS mirrors (Timeout: 5s)...${reset}"
+            echo -e "${blue}Ranking EndeavourOS mirrors (Timeout: 5s)...${reset}"
             if sudo eos-rankmirrors -t 5 > /dev/null; then
-                echo -e "  ${green}EndeavourOS mirrors updated.${reset}"
+                echo -e "${green}EndeavourOS mirrors updated.${reset}"
             else
-                echo -e "  ${red}Failed to rank EOS mirrors.${reset}"
+                echo -e "${red}Failed to rank EOS mirrors.${reset}"
             fi
         fi
 
         if command -v cachyos-rate-mirrors &>/dev/null; then
-            echo -e "  ${blue}Ranking CachyOS mirrors...${reset}"
+            echo -e "${blue}Ranking CachyOS mirrors...${reset}"
             if sudo cachyos-rate-mirrors; then
-                echo -e "  ${green}CachyOS mirrors updated.${reset}"
+                echo -e "${green}CachyOS mirrors updated.${reset}"
             else
-                echo -e "  ${red}Failed to rank CachyOS mirrors.${reset}"
+                echo -e "${red}Failed to rank CachyOS mirrors.${reset}"
             fi
         fi
 
         if command -v reflector &>/dev/null; then
-            echo -e "\n  ${blue}Running reflector for Arch Linux...${reset}"
+            echo -e "\n${blue}Running reflector for Arch Linux...${reset}"
 
             local REFL_SUCCESS=false
 
@@ -735,7 +735,7 @@ refresh_mirrors() {
                     echo -e "${yellow}The connection might be unstable, or the mirrors are currently down.${reset}"
 
                     local force_cont
-                    echo -ne "  ${white}Continue with the old mirrorlist anyway? [y/N]: ${reset}"
+                    echo -ne "${white}Continue with the old mirrorlist anyway? [y/N]: ${reset}"
                     read -r force_cont
 
                     if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
@@ -750,40 +750,40 @@ refresh_mirrors() {
             }
 
             if [[ -n "$CUSTOM_REFLECTOR" ]]; then
-                echo -e "  ${dim}Executing custom reflector command...${reset}"
+                echo -e "${dim}Executing custom reflector command...${reset}"
                 run_refl_and_check "$CUSTOM_REFLECTOR"
                 local refl_res=$?
                 if [[ $refl_res -eq 0 ]]; then
                     local new_mirror=$(get_current_mirror)
-                    echo -e "  ${green}Custom Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
+                    echo -e "${green}Custom Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
                     REFL_SUCCESS=true
                 elif [[ $refl_res -eq 255 ]]; then
-                    echo -e "  ${yellow}Proceeding with old mirrors...${reset}\n"
+                    echo -e "${yellow}Proceeding with old mirrors...${reset}\n"
                     return 0
                 else
-                    echo -e "  ${yellow}Custom reflector command failed. Falling back to default...${reset}"
+                    echo -e "${yellow}Custom reflector command failed. Falling back to default...${reset}"
                 fi
             fi
 
             if ! $REFL_SUCCESS; then
-                echo -e "  ${dim}Ranking mirrors... WARNINGS ARE EXPECTED.${reset}"
+                echo -e "${dim}Ranking mirrors... WARNINGS ARE EXPECTED.${reset}"
                 run_refl_and_check "$DEFAULT_REFLECTOR"
                 local refl_res=$?
                 if [[ $refl_res -eq 0 ]]; then
                     local new_mirror=$(get_current_mirror)
-                    echo -e "  ${green}Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
+                    echo -e "${green}Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
                     return 0
                 elif [[ $refl_res -eq 255 ]]; then
-                    echo -e "  ${yellow}Proceeding with old mirrors...${reset}\n"
+                    echo -e "${yellow}Proceeding with old mirrors...${reset}\n"
                     return 0
                 else
-                    echo -e "  ${red}Reflector failed (Try changing the reflector.conf settings).${reset}\n"
+                    echo -e "${red}Reflector failed (Try changing the settings.conf settings).${reset}\n"
                     return 1
                 fi
             fi
             return 0
         else
-            echo -e "  ${red}Error: 'reflector' is not installed.${reset}\n"
+            echo -e "${red}Error: 'reflector' is not installed.${reset}\n"
             return 1
         fi
     fi
@@ -831,7 +831,7 @@ if [[ -f /var/lib/pacman/db.lck ]]; then
         exit 1
     else
         echo -e "${yellow}Stale lock file found (/var/lib/pacman/db.lck), but no active process detected.${reset}"
-        echo -ne "  ${white}Remove the stale lock file and continue? [y/N]: ${reset}"
+        echo -ne "${white}Remove the stale lock file and continue? [y/N]: ${reset}"
         read -r rm_lock
         if [[ "$rm_lock" =~ ^[Yy]$ ]]; then
             sudo rm /var/lib/pacman/db.lck
@@ -933,7 +933,7 @@ while (( attempt <= MAX_RETRIES )); do
         if (( err_count >= 15 )); then
             if $DAEMON_MODE; then exit 1; fi
             echo -e "\n${yellow}The selected mirror might not be optimal.${reset}"
-            echo -ne "  ${white}Continue anyway? [y/N]: ${reset}"
+            echo -ne "${white}Continue anyway? [y/N]: ${reset}"
             read -r force_cont
             if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
                 echo -e "${red}Update aborted by user.${reset}"
@@ -1002,9 +1002,9 @@ if [[ -z "$updates" ]]; then
     echo -e "${green}System is fully up to date.${reset}\n"
 
     if [[ -n "$ignored_updates" ]]; then
-        echo -e "  ${magenta}${bold}Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
+        echo -e "${magenta}${bold}Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
         while read -r pkg old_ver _ new_ver rest; do
-            echo -e "    ${dim}- ${pkg}: ${gray}${old_ver}${reset} ${blue}→${reset} ${white}${new_ver}${reset}"
+            echo -e "${dim}- ${pkg}: ${gray}${old_ver}${reset} ${blue}→${reset} ${white}${new_ver}${reset}"
         done <<< "$ignored_updates"
         echo ""
     fi
@@ -1027,14 +1027,14 @@ if [[ -n "$ignored_updates" ]]; then
 
     if [[ $sim_exit -ne 0 ]]; then
         if echo "$sim_out" | grep -qE "could not satisfy dependencies|conflicting dependencies|unresolvable package conflicts"; then
-            dependency_warnings=$(echo "$sim_out" | awk '/could not satisfy dependencies|conflicting dependencies|unresolvable package conflicts/{flag=1; next} flag {print "    " $0}')
+            dependency_warnings=$(echo "$sim_out" | awk '/could not satisfy dependencies|conflicting dependencies|unresolvable package conflicts/{flag=1; next} flag {print $0}')
 
             if [[ -z "$dependency_warnings" ]]; then
-                dependency_warnings=$(echo "$sim_out" | awk '/error:/ {flag=1} flag {print "    " $0}')
-                [[ -z "$dependency_warnings" ]] && dependency_warnings=$(echo "$sim_out" | sed 's/^/    /')
+                dependency_warnings=$(echo "$sim_out" | awk '/error:/ {flag=1} flag {print $0}')
+                [[ -z "$dependency_warnings" ]] && dependency_warnings="$sim_out"
             fi
         else
-            sim_error_warning="    ${yellow}The update simulation failed due to a transaction error.${reset}\n${dim}$(echo "$sim_out" | sed 's/^/      /')${reset}"
+            sim_error_warning="${yellow}The update simulation failed due to a transaction error.${reset}\n${dim}${sim_out}${reset}"
         fi
     fi
 fi
@@ -1102,31 +1102,6 @@ done < <(echo "$all_pkgs" | xargs -r env LC_ALL=C pacman -Qi 2>/dev/null | awk '
     END {if (n) print n "|" b "|" r}
 ')
 
-total_download_size="0.00 MiB"
-if [[ -n "$repo_pkgs" ]]; then
-    total_download_size=$(echo "$repo_pkgs" | xargs -r env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" 2>/dev/null | awk '
-        /^Download Size[ \t]*:/ {
-            sub(/^[^:]*:[ \t]*/, "")
-
-            val = $1
-            unit = $2
-
-            if (unit == "KiB") val /= 1024
-            else if (unit == "GiB") val *= 1024
-            else if (unit == "B") val /= (1024 * 1024)
-
-            sum += val
-        }
-        END {
-            if (sum >= 1024) {
-                printf "%.2f GiB", sum / 1024
-            } else {
-                printf "%.2f MiB", sum + 0
-            }
-        }
-    ')
-fi
-
 log_step "Processing data and calculating diffs..."
 
 now=$(date +%s)
@@ -1148,7 +1123,7 @@ while read -r pkgname old_ver _ new_ver _rest; do
         if (( percent % 5 == 0 || current_idx == pkg_count )); then
             filled=$(( percent / 5 ))
             empty=$(( 20 - filled ))
-            printf "\r\033[2K  ${gray}Analysis: ${blue}["
+            printf "\r\033[2K${gray}Analysis: ${blue}["
             printf "%${filled}s" | tr ' ' '='
             printf ">"
             printf "%${empty}s" | tr ' ' '-'
@@ -1213,6 +1188,29 @@ while read -r pkgname old_ver _ new_ver _rest; do
 done <<< "$updates"
 
 echo -e "\n"
+
+total_download_size="0.00 MiB"
+if [[ -s "$OUTPUT_FILE" ]]; then
+    total_download_size=$(env LC_ALL=C awk -F'\t' '{
+        if ($8 != "AUR" && $9 != "N/A" && $9 != "") {
+            split($9, a, " ")
+            val = a[1]
+            unit = a[2]
+
+            if (unit == "KiB") val /= 1024
+            else if (unit == "GiB") val *= 1024
+            else if (unit == "B") val /= (1024 * 1024)
+
+            sum += val
+        }
+    } END {
+        if (sum >= 1024) {
+            printf "%.2f GiB", sum / 1024
+        } else {
+            printf "%.2f MiB", sum + 0
+        }
+    }' "$OUTPUT_FILE")
+fi
 
 # --- 7. Table Output ---
 w_age=8
@@ -1334,7 +1332,7 @@ env LC_ALL=C sort -n "$OUTPUT_FILE" | while IFS=$'\t' read -r key diff_hours pkg
 done
 
 printf "${dim}%s${reset}\n" "$sep_line"
-echo -e "  ${gray}Total Download Size: ${white}${bold}${total_download_size}${reset}"
+echo -e "${gray}Total Download Size: ${white}${bold}${total_download_size}${reset}"
 
 give_advice() {
     local now=$(date +%s)
@@ -1481,7 +1479,7 @@ give_advice() {
         3) color="${red}${bold}"; verdict="DANGER" ;;
     esac
 
-    printf "  ${bold}ADVISOR:${reset} "
+    printf "${bold}ADVISOR:${reset} "
 
     if (( max_wait_sec == 0 )); then
         echo -e "${green}${bold}GO FOR IT!${reset} ${dim}(Packages have stabilized. Mirrors synced.)${reset}"
@@ -1499,9 +1497,9 @@ give_advice() {
         echo -e "${color}${bold}$verdict${reset} ${white}Recommend waiting until ${bold}$target_time${reset} ($dur_str)"
 
         if (( ${#reasons[@]} > 0 )); then
-             echo -ne "           ${dim}Reason: ${reasons[0]}${reset}"
+             echo -ne "${dim}Reason: ${reasons[0]}${reset}"
              for (( i=1; i<${#reasons[@]}; i++ )); do
-                 echo -ne "\n                   ${dim}+ ${reasons[$i]}${reset}"
+                 echo -ne "\n${dim}+ ${reasons[$i]}${reset}"
              done
              echo ""
         fi
@@ -1514,20 +1512,20 @@ GLOBAL_ADVISOR_SAFE=false
 give_advice
 
 if [[ -n "$ignored_updates" ]]; then
-    echo -e "\n  ${magenta}${bold}Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
+    echo -e "\n${magenta}${bold}Skipped Packages (IgnorePkg / IgnoreGroup):${reset}"
     while read -r pkg old_ver _ new_ver rest; do
-        echo -e "    ${dim}- ${pkg}: ${gray}${old_ver}${reset} ${blue}→${reset} ${white}${new_ver}${reset}"
+        echo -e "${dim}- ${pkg}: ${gray}${old_ver}${reset} ${blue}→${reset} ${white}${new_ver}${reset}"
     done <<< "$ignored_updates"
 
     if [[ -n "$dependency_warnings" ]]; then
-        echo -e "\n  ${bg_nuke}${white}${bold}DEPENDENCY BREAKAGE DETECTED ⚠ ${reset}"
-        echo -e "  ${red}Updating now will likely abort because of unresolved dependencies!${reset}"
-        echo -e "  ${gray}Pacman reports the following conflicts:${reset}"
+        echo -e "\n${bg_nuke}${white}${bold}DEPENDENCY BREAKAGE DETECTED${reset}"
+        echo -e "${red}Updating now will likely abort because of unresolved dependencies!${reset}"
+        echo -e "${gray}Pacman reports the following conflicts:${reset}"
         echo -e "${red}${dependency_warnings}${reset}\n"
     elif [[ -n "$sim_error_warning" ]]; then
         echo -e "\n${sim_error_warning}\n"
     else
-        echo -e "\n    ${green}No dependency conflicts detected from skipped packages ${dim}(Official repos only)${green}.${reset}"
+        echo -e "\n${green}No dependency conflicts detected from skipped packages ${dim}(Official repos only)${green}.${reset}"
     fi
 fi
 
@@ -1591,7 +1589,7 @@ fi
 
 sudo -v
 
-echo -ne "\n  ${bold}${white}Apply updates?${reset} ${dim}(${PROMPT_CMD})${reset} [Y/n]: "
+echo -ne "\n${bold}${white}Apply updates?${reset} ${dim}(${PROMPT_CMD})${reset} [Y/n]: "
 read -r answer
 
 if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
@@ -1605,7 +1603,7 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
         UPDATE_SUCCESS=true
 
         for cmd in "${CUSTOM_CMDS[@]}"; do
-            echo -e "  ${dim}Executing: ${white}$cmd${reset}"
+            echo -e "${dim}Executing: ${white}$cmd${reset}"
             bash -c "$cmd"
             core_exit=$?
 
@@ -1619,7 +1617,7 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
         if $UPDATE_SUCCESS; then
             if [[ -n "$(check_pending_updates)" ]]; then
                 echo -e "\n${yellow}Custom commands finished successfully, but standard pacman updates were skipped.${reset}"
-                echo -e "  ${dim}Make sure your custom commands include a package manager update (e.g., 'paru -Syu').${reset}"
+                echo -e "${dim}Make sure your custom commands include a package manager update (e.g., 'paru -Syu').${reset}"
             fi
         fi
 
@@ -1636,12 +1634,12 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
             topgrade && UPDATE_SUCCESS=true
         else
             echo -e "\n${yellow}eos-update was cancelled or did not fully apply updates.${reset}"
-            echo -ne "  ${white}Run topgrade anyway? (Flatpaks/AUR etc) [y/N]: ${reset}"
+            echo -ne "${white}Run topgrade anyway? (Flatpaks/AUR etc) [y/N]: ${reset}"
             read -r force_extra
             if [[ "$force_extra" =~ ^[Yy]$ ]]; then
                 topgrade && UPDATE_SUCCESS=true
             else
-                echo -e "  ${dim}Skipping extra updates.${reset}\n"
+                echo -e "${dim}Skipping extra updates.${reset}\n"
             fi
         fi
 
@@ -1684,7 +1682,7 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     fi
 
 else
-    echo -e "  ${yellow}Operation cancelled.${reset}\n"
+    echo -e "${yellow}Operation cancelled.${reset}\n"
 fi
 
 sleep 0.1
