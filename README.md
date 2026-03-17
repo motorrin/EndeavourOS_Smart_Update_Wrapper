@@ -170,7 +170,7 @@ Manual *(if you downloaded it to a different folder, change the path accordingly
 
 ### 5. Delete Pacman database backups:
 
-`sudo rmdir /var/lib/pacman/backup`
+`sudo rm -rf /var/lib/pacman/backup`
 
 ### 6. Clear temporary cache files in RAM:
 
