@@ -21,9 +21,8 @@ CPUSchedulingPolicy=idle
 Description=Check for Arch updates every __CHECK_INTERVAL__
 
 [Timer]
-OnBootSec=__START_DELAY__
+OnActiveSec=__START_DELAY__
 OnUnitActiveSec=__CHECK_INTERVAL__
-Persistent=true
 
 [Install]
 WantedBy=timers.target
