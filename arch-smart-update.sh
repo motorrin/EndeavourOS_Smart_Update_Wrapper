@@ -809,16 +809,21 @@ fi
 
 AUR_HELPER=""
 if [[ -n "${AUR_HELPER_OVERRIDE:-}" ]]; then
-    if command -v "$AUR_HELPER_OVERRIDE" &>/dev/null; then
+    helper_bin=$(echo "$AUR_HELPER_OVERRIDE" | awk '{print $1}')
+    if command -v "$helper_bin" &>/dev/null; then
         AUR_HELPER="$AUR_HELPER_OVERRIDE"
     else
-        echo -e "${yellow}Warning: Override AUR helper '$AUR_HELPER_OVERRIDE' not found. Falling back to auto-detect.${reset}"
-        if command -v paru &>/dev/null; then AUR_HELPER="paru"
-        elif command -v yay &>/dev/null; then AUR_HELPER="yay"
-        fi
+        echo -e "${yellow}Warning: Override AUR helper '$helper_bin' not found. Falling back to auto-detect.${reset}"
     fi
-elif command -v paru &>/dev/null; then AUR_HELPER="paru"
-elif command -v yay &>/dev/null; then AUR_HELPER="yay"
+fi
+
+if [[ -z "$AUR_HELPER" ]]; then
+    for helper in "paru" "yay" "pikaur" "trizen" "aura" "pacaur"; do
+        if command -v "$helper" &>/dev/null; then
+            AUR_HELPER="$helper"
+            break
+        fi
+    done
 fi
 
 echo -e "\n${blue}${bold}Checking for updates...${reset}"
@@ -1553,8 +1558,23 @@ fi
 
 # --- 8. Update Request ---
 check_pending_updates() {
+    local check_mode="${1:-all}"
     local pending
     pending=$(LC_ALL=C pacman -Qu 2>/dev/null)
+
+    if [[ "$check_mode" != "repo_only" && -n "$AUR_HELPER" ]]; then
+        local aur_pending
+        aur_pending=$($AUR_HELPER -Qua --color never 2>/dev/null)
+
+        if [[ -n "$aur_pending" ]]; then
+            if [[ -n "$pending" ]]; then
+                pending="$pending"$'\n'"$aur_pending"
+            else
+                pending="$aur_pending"
+            fi
+        fi
+    fi
+
     if [[ -n "$ignored_pkgs" && -n "$pending" ]]; then
         pending=$(echo "$pending" | awk -v ig="$ignored_pkgs" '
             BEGIN { split(ig, a, "\n"); for (i in a) if(a[i] != "") ign[a[i]]=1 }
@@ -1565,9 +1585,11 @@ check_pending_updates() {
 }
 
 HAS_EOS=false
+HAS_CACHY=false
 HAS_TOPGRADE=false
 
 command -v eos-update &> /dev/null && HAS_EOS=true
+command -v arch-update &> /dev/null && HAS_CACHY=true
 command -v topgrade &> /dev/null && HAS_TOPGRADE=true
 
 if [[ ${#CUSTOM_CMDS[@]} -gt 0 ]]; then
@@ -1576,10 +1598,13 @@ if [[ ${#CUSTOM_CMDS[@]} -gt 0 ]]; then
     else
         PROMPT_CMD="Custom config (${#CUSTOM_CMDS[@]} commands)"
     fi
-elif $HAS_EOS && $HAS_TOPGRADE; then
-    PROMPT_CMD="eos-update && topgrade"
-elif $HAS_EOS; then
-    PROMPT_CMD="eos-update"
+elif { $HAS_EOS || $HAS_CACHY; } && $HAS_TOPGRADE; then
+    if $HAS_EOS; then PROMPT_CMD="eos-update && topgrade"
+    else PROMPT_CMD="arch-update && topgrade"; fi
+elif $HAS_EOS || $HAS_CACHY; then
+    if $HAS_EOS; then PROMPT_CMD="eos-update"
+    else PROMPT_CMD="arch-update"; fi
+    [[ -n "$AUR_HELPER" ]] && PROMPT_CMD="$PROMPT_CMD (fallback: $(echo "$AUR_HELPER" | awk '{print $1}'))"
 elif $HAS_TOPGRADE; then
     PROMPT_CMD="topgrade"
 else
@@ -1600,8 +1625,30 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     echo -e "\n"
     backup_pacman_db
     UPDATE_SUCCESS=false
+    RUN_STANDARD=true
 
     if [[ ${#CUSTOM_CMDS[@]} -gt 0 ]]; then
+        RUN_STANDARD=false
+
+        has_pkg_mgr=false
+        for cmd in "${CUSTOM_CMDS[@]}"; do
+            if [[ "$cmd" =~ (pacman|yay|paru|eos-update|arch-update|topgrade|pikaur|trizen|aura|pacaur) ]]; then
+                has_pkg_mgr=true
+                break
+            fi
+        done
+
+        if [[ "$has_pkg_mgr" == false && -n "$(check_pending_updates)" ]]; then
+            echo -e "${yellow}Warning: Your custom commands do not seem to include a system package manager.${reset}"
+            echo -e "${dim}By default, custom commands OVERRIDE standard system updates.${reset}"
+            echo -ne "${white}Would you like to also run standard updates AFTER your custom commands? [Y/n]: ${reset}"
+            read -r ans_std
+            if [[ "$ans_std" =~ ^[Yy]$ || -z "$ans_std" ]]; then
+                RUN_STANDARD=true
+            fi
+            echo ""
+        fi
+
         echo -e "${blue}${bold}Running custom update commands...${reset}\n"
         UPDATE_SUCCESS=true
 
@@ -1612,63 +1659,105 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
 
             if [[ $core_exit -ne 0 ]]; then
                 UPDATE_SUCCESS=false
+                RUN_STANDARD=false
                 echo -e "\n${red}Command failed with exit code $core_exit: $cmd${reset}"
                 break
             fi
         done
 
-        if $UPDATE_SUCCESS; then
+        if $UPDATE_SUCCESS && [[ "$RUN_STANDARD" == false ]]; then
             if [[ -n "$(check_pending_updates)" ]]; then
                 echo -e "\n${yellow}Custom commands finished successfully, but standard pacman updates were skipped.${reset}"
-                echo -e "${dim}Make sure your custom commands include a package manager update (e.g., 'paru -Syu').${reset}"
+                echo -e "${dim}To update the system too, answer 'Y' to the prompt or add 'yay -Syu' to CUSTOM_CMDS.${reset}"
             fi
         fi
 
-    elif $HAS_EOS && $HAS_TOPGRADE; then
-        echo -e "${blue}${bold}Running eos-update (Keyrings & Packages)...${reset}\n"
-        eos-update
-        core_exit=$?
+        if $UPDATE_SUCCESS && $RUN_STANDARD; then
+            echo -e "\n${green}Custom commands finished successfully. Moving to standard updates...${reset}\n"
+        fi
+    fi
 
-        pending_updates=$(check_pending_updates)
+    if $RUN_STANDARD; then
+        if { $HAS_EOS || $HAS_CACHY; } && $HAS_TOPGRADE; then
+            if $HAS_EOS; then tool_name="eos-update"; else tool_name="arch-update"; fi
 
-        if [[ -z "$pending_updates" && $core_exit -eq 0 ]]; then
-            echo -e "\n${green}Core updates applied successfully.${reset}"
-            echo -e "\n${blue}${bold}Running Topgrade (Firmware, Flatpaks, Dotfiles)...${reset}\n"
-            topgrade && UPDATE_SUCCESS=true
-        else
-            echo -e "\n${yellow}eos-update was cancelled or did not fully apply updates.${reset}"
-            echo -ne "${white}Run topgrade anyway? (Flatpaks/AUR etc) [y/N]: ${reset}"
-            read -r force_extra
-            if [[ "$force_extra" =~ ^[Yy]$ ]]; then
+            echo -e "${blue}${bold}Running $tool_name (Keyrings & Packages)...${reset}\n"
+            $tool_name
+            core_exit=$?
+
+            pending_updates=$(check_pending_updates "repo_only")
+
+            if [[ -z "$pending_updates" && $core_exit -eq 0 ]]; then
+                echo -e "\n${green}Core updates applied successfully.${reset}"
+                echo -e "\n${blue}${bold}Running Topgrade (Firmware, Flatpaks, Dotfiles)...${reset}\n"
                 topgrade && UPDATE_SUCCESS=true
             else
-                echo -e "${dim}Skipping extra updates.${reset}\n"
+                echo -e "\n${yellow}$tool_name was cancelled or did not fully apply updates.${reset}"
+                echo -ne "${white}Run topgrade anyway? (Flatpaks/AUR etc) [y/N]: ${reset}"
+                read -r force_extra
+                if [[ "$force_extra" =~ ^[Yy]$ ]]; then
+                    topgrade && UPDATE_SUCCESS=true
+                else
+                    echo -e "${dim}Skipping extra updates.${reset}\n"
+                fi
             fi
-        fi
 
-    elif $HAS_EOS; then
-        eos-update
-        core_exit=$?
-        if [[ $core_exit -eq 0 && -z "$(check_pending_updates)" ]]; then
-            UPDATE_SUCCESS=true
-        fi
+        elif $HAS_EOS || $HAS_CACHY; then
+            if $HAS_EOS; then tool_name="eos-update"; else tool_name="arch-update"; fi
 
-    elif $HAS_TOPGRADE; then
-        echo -e "${blue}${bold}Running Topgrade (System, AUR, Firmware, etc.)...${reset}\n"
-        topgrade && UPDATE_SUCCESS=true
-
-    else
-        echo -e "${blue}${bold}Running standard system update...${reset}\n"
-        if [[ -n "$AUR_HELPER" ]]; then
-            $AUR_HELPER -Syu
+            echo -e "${blue}${bold}Running $tool_name...${reset}\n"
+            $tool_name
             core_exit=$?
+
+            pending_updates=$(check_pending_updates)
+            if [[ $core_exit -eq 0 && -z "$pending_updates" ]]; then
+                UPDATE_SUCCESS=true
+            else
+                if [[ -n "$pending_updates" && -n "$AUR_HELPER" ]]; then
+                    echo -e "\n${yellow}$tool_name did not fully apply all updates (likely AUR packages remaining).${reset}"
+
+                    helper_bin=$(echo "$AUR_HELPER" | awk '{print $1}')
+                    aur_flags="-Syu"
+                    if [[ "$helper_bin" =~ ^(yay|paru|pikaur|trizen)$ && $core_exit -eq 0 ]]; then
+                        aur_flags="-Sua"
+                    fi
+
+                    echo -ne "${white}Run $helper_bin to apply remaining updates? [Y/n]: ${reset}"
+                    read -r force_aur
+
+                    if [[ "$force_aur" =~ ^[Yy]$ || -z "$force_aur" ]]; then
+                        $AUR_HELPER $aur_flags
+
+                        if [[ $? -eq 0 && -z "$(check_pending_updates)" ]]; then
+                            UPDATE_SUCCESS=true
+                        else
+                            echo -e "\n${red}Some updates are still pending or failed.${reset}"
+                        fi
+                    else
+                        echo -e "${dim}Skipping remaining updates.${reset}\n"
+                    fi
+                elif [[ -n "$pending_updates" ]]; then
+                    echo -e "\n${red}Updates remaining, but no AUR helper detected to process them.${reset}"
+                fi
+            fi
+
+        elif $HAS_TOPGRADE; then
+            echo -e "${blue}${bold}Running Topgrade (System, AUR, Firmware, etc.)...${reset}\n"
+            topgrade && UPDATE_SUCCESS=true
+
         else
-            sudo pacman -Syu
-            core_exit=$?
-        fi
+            echo -e "${blue}${bold}Running standard system update...${reset}\n"
+            if [[ -n "$AUR_HELPER" ]]; then
+                $AUR_HELPER -Syu
+                core_exit=$?
+            else
+                sudo pacman -Syu
+                core_exit=$?
+            fi
 
-        if [[ $core_exit -eq 0 && -z "$(check_pending_updates)" ]]; then
-            UPDATE_SUCCESS=true
+            if [[ $core_exit -eq 0 && -z "$(check_pending_updates)" ]]; then
+                UPDATE_SUCCESS=true
+            fi
         fi
     fi
 
