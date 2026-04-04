@@ -537,7 +537,7 @@ except Exception:
                         local notif_icon="dialog-warning"
                         [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
 
-                        if notify-send --help 2>&1 | grep -q "\-\-action"; then
+                        if notify-send --help 2>&1 | grep -q -- "--action"; then
                             local wait_script
                             wait_script=$(cat <<EOF
 $(declare -f launch_detached)
@@ -1536,7 +1536,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
 
             echo "$pkg_count" > "$CACHE_FILE"
 
-            if notify-send --help 2>&1 | grep -q "\-\-action"; then
+            if notify-send --help 2>&1 | grep -q -- "--action"; then
                 wait_script=$(cat <<EOF
 export TERMINAL="$TERMINAL"
 export SCRIPT_BIN="$(realpath "$(command -v "$0" || echo "$0")")"
