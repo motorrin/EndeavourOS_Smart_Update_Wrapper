@@ -152,81 +152,6 @@ parse_bash_array() {
     ' "$file"
 }
 
-migrate_old_configs() {
-    local migrated=false
-    local old_set="$CONFIG_DIR/other_settings.conf"
-    local old_ref="$CONFIG_DIR/reflector.conf"
-    local old_cmd="$CONFIG_DIR/custom_commands.conf"
-    local old_pkg="$CONFIG_DIR/user_packages.conf"
-
-    [[ ! -f "$old_set" && ! -f "$old_ref" && ! -f "$old_cmd" && ! -f "$old_pkg" ]] && return 1
-
-    echo -e "${dim}Migrating old configuration files to settings.conf...${reset}"
-
-    if [[ -f "$old_set" ]]; then
-        while IFS='=' read -r key val; do
-            [[ -z "$key" || "$key" == \#* ]] && continue
-            val="${val//[\"\'$'\r']/}"
-            sed -i "s|^${key}=.*|${key}=\"${val}\"|" "$SETTINGS_CONF"
-        done < "$old_set"
-        migrated=true
-    fi
-
-    if [[ -f "$old_ref" ]]; then
-        local ref_cmd=$(grep -v '^#' "$old_ref" | grep '[^[:space:]]' | head -n 1)
-        if [[ -n "$ref_cmd" ]]; then
-            local esc_ref=$(printf '%s\n' "$ref_cmd" | sed -e 's/[|\/&]/\\&/g')
-            sed -i "s|^# CUSTOM_REFLECTOR_CMD=.*|CUSTOM_REFLECTOR_CMD=\"${esc_ref}\"|" "$SETTINGS_CONF"
-        fi
-        migrated=true
-    fi
-
-    if [[ -f "$old_cmd" ]]; then
-        local cmds=""
-        while IFS= read -r line; do
-            line="${line#"${line%%[![:space:]]*}"}"
-            line="${line%"${line##*[![:space:]]}"}"
-            [[ -z "$line" || "$line" == \#* ]] && continue
-            cmds+="    \"${line//\"/\\\"}\"\n"
-        done < "$old_cmd"
-
-        if [[ -n "$cmds" ]]; then
-            awk -v inject="$cmds" '
-                /^CUSTOM_CMDS=\(/ { print; printf "%s", inject; in_block=1; next }
-                in_block && /^\)/ { print; in_block=0; next }
-                in_block { next }
-                { print }
-            ' "$SETTINGS_CONF" > "${SETTINGS_CONF}.tmp" && mv "${SETTINGS_CONF}.tmp" "$SETTINGS_CONF"
-        fi
-        migrated=true
-    fi
-
-    if [[ -f "$old_pkg" ]]; then
-        for cat in NUCLEAR_PKGS CRITICAL_PKGS FEATURE_PKGS; do
-            local items=$(parse_bash_array "$old_pkg" "$cat" | sed 's/^/    "/; s/$/"/')
-            if [[ -n "$items" ]]; then
-                awk -v arr="USER_${cat}" -v inject="$items" '
-                    $0 ~ "^"arr"=\\(" { print; print inject; in_block=1; next }
-                    in_block && /^\)/ { print; in_block=0; next }
-                    in_block { next }
-                    { print }
-                ' "$SETTINGS_CONF" > "${SETTINGS_CONF}.tmp" && mv "${SETTINGS_CONF}.tmp" "$SETTINGS_CONF"
-            fi
-        done
-        migrated=true
-    fi
-
-    if $migrated; then
-        echo -e "${green}Migration complete. Removing old configuration files.${reset}"
-        rm -f "$old_set" "$old_ref" "$old_cmd" "$old_pkg" \
-              "$CONFIG_DIR/other_settings.default.conf" \
-              "$CONFIG_DIR/reflector.default.conf" \
-              "$CONFIG_DIR/custom_commands.default.conf"
-        return 0
-    fi
-    return 1
-}
-
 echo -e "${dim}Checking for configuration updates...${reset}"
 
 update_from_github "$PKG_CONF" "https://raw.githubusercontent.com/motorrin/Arch_Smart_Update/main/packages.conf" "NUCLEAR_PKGS"
@@ -241,39 +166,35 @@ if [[ ! -f "$SETTINGS_CONF" && -f "$SETTINGS_DEFAULT" ]]; then
     chmod 600 "$SETTINGS_CONF"
     echo -e "${dim}Created default $SETTINGS_CONF${reset}"
 
-    if ! migrate_old_configs; then
-        echo -e "\n${blue}${bold}[First Run Setup]${reset}"
-        setup_ans="Y"
-        daemon_ans="N"
+    echo -e "\n${blue}${bold}[First Run Setup]${reset}"
+    setup_ans="Y"
+    daemon_ans="N"
 
-        prompt_with_timeout "Allow mirror ranking option before update (with confirmation)?" "Y/n" 15 setup_ans
-        prompt_with_timeout "Enable background update checker?" "y/N" 15 daemon_ans
+    prompt_with_timeout "Allow mirror ranking option before update (with confirmation)?" "Y/n" 15 setup_ans
+    prompt_with_timeout "Enable background update checker?" "y/N" 15 daemon_ans
 
-        echo ""
+    echo ""
 
-        if [[ "$setup_ans" =~ ^[Nn]$ ]]; then
-            sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=false/' "$SETTINGS_CONF"
-            echo -e "${dim}Mirror ranking prompt disabled.${reset}"
-        else
-            sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=true/' "$SETTINGS_CONF"
-            echo -e "${dim}Mirror ranking prompt enabled.${reset}"
-        fi
-
-        if [[ "$daemon_ans" =~ ^[Yy]$ ]]; then
-            sed -i 's/^ENABLE_BACKGROUND_CHECK=.*/ENABLE_BACKGROUND_CHECK=true/' "$SETTINGS_CONF"
-            echo -e "${dim}Background checker enabled.${reset}"
-            if ! pacman -Q libnotify >/dev/null 2>&1; then
-                echo -e "${yellow}Warning: The ${red}libnotify${yellow} package is not installed. Please install it for notifications to work.${reset}\n"
-            else
-                echo ""
-            fi
-        else
-            sed -i 's/^ENABLE_BACKGROUND_CHECK=.*/ENABLE_BACKGROUND_CHECK=false/' "$SETTINGS_CONF"
-            echo -e "${dim}Background checker disabled.${reset}\n"
-        fi
+    if [[ "$setup_ans" =~ ^[Nn]$ ]]; then
+        sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=false/' "$SETTINGS_CONF"
+        echo -e "${dim}Mirror ranking prompt disabled.${reset}"
+    else
+        sed -i 's/^PROMPT_MIRROR_REFRESH=.*/PROMPT_MIRROR_REFRESH=true/' "$SETTINGS_CONF"
+        echo -e "${dim}Mirror ranking prompt enabled.${reset}"
     fi
-else
-    migrate_old_configs
+
+    if [[ "$daemon_ans" =~ ^[Yy]$ ]]; then
+        sed -i 's/^ENABLE_BACKGROUND_CHECK=.*/ENABLE_BACKGROUND_CHECK=true/' "$SETTINGS_CONF"
+        echo -e "${dim}Background checker enabled.${reset}"
+        if ! pacman -Q libnotify >/dev/null 2>&1; then
+            echo -e "${yellow}Warning: The ${red}libnotify${yellow} package is not installed. Please install it for notifications to work.${reset}\n"
+        else
+            echo ""
+        fi
+    else
+        sed -i 's/^ENABLE_BACKGROUND_CHECK=.*/ENABLE_BACKGROUND_CHECK=false/' "$SETTINGS_CONF"
+        echo -e "${dim}Background checker disabled.${reset}\n"
+    fi
 fi
 
 if ! validate_user_conf "$SETTINGS_CONF" "settings.conf"; then
@@ -363,13 +284,22 @@ sync_daemon_state() {
         if ! command -v fakeroot >/dev/null 2>&1; then
             echo -e "${yellow}Background check requires 'fakeroot' (install base-devel). Disabling daemon.${reset}"
             ENABLE_BACKGROUND_CHECK="false"
-            if systemctl --user is-active --quiet arch-smart-update.timer 2>/dev/null || [[ -f "$SYSTEMD_USER_DIR/arch-smart-update.timer" ]]; then
-                systemctl --user disable --now arch-smart-update.timer >/dev/null 2>&1
-                rm -f "$SYSTEMD_USER_DIR/arch-smart-update.service" "$SYSTEMD_USER_DIR/arch-smart-update.timer"
-                systemctl --user daemon-reload >/dev/null 2>&1
+            if command -v systemctl >/dev/null 2>&1; then
+                if systemctl --user is-active --quiet arch-smart-update.timer 2>/dev/null || [[ -f "$SYSTEMD_USER_DIR/arch-smart-update.timer" ]]; then
+                    systemctl --user disable --now arch-smart-update.timer >/dev/null 2>&1
+                    rm -f "$SYSTEMD_USER_DIR/arch-smart-update.service" "$SYSTEMD_USER_DIR/arch-smart-update.timer"
+                    systemctl --user daemon-reload >/dev/null 2>&1
+                fi
             fi
             return 0
         fi
+
+        if ! command -v systemctl >/dev/null 2>&1; then
+            echo -e "${yellow}Notice: systemctl not found (non-systemd system).${reset}"
+            echo -e "${dim}To use the background checker, please manually schedule a cron job for: ${reset}${white}$(realpath "$(command -v "$0" || echo "$0")") --daemon${reset}"
+            return 0
+        fi
+
         mkdir -p "$SYSTEMD_USER_DIR"
 
         if [[ -f "$DAEMON_TEMPLATE" ]]; then
@@ -408,10 +338,12 @@ sync_daemon_state() {
             fi
         fi
     else
-        if systemctl --user is-active --quiet arch-smart-update.timer 2>/dev/null || [[ -f "$SYSTEMD_USER_DIR/arch-smart-update.timer" ]]; then
-            systemctl --user disable --now arch-smart-update.timer >/dev/null 2>&1
-            rm -f "$SYSTEMD_USER_DIR/arch-smart-update.service" "$SYSTEMD_USER_DIR/arch-smart-update.timer"
-            systemctl --user daemon-reload >/dev/null 2>&1
+        if command -v systemctl >/dev/null 2>&1; then
+            if systemctl --user is-active --quiet arch-smart-update.timer 2>/dev/null || [[ -f "$SYSTEMD_USER_DIR/arch-smart-update.timer" ]]; then
+                systemctl --user disable --now arch-smart-update.timer >/dev/null 2>&1
+                rm -f "$SYSTEMD_USER_DIR/arch-smart-update.service" "$SYSTEMD_USER_DIR/arch-smart-update.timer"
+                systemctl --user daemon-reload >/dev/null 2>&1
+            fi
         fi
     fi
 }
@@ -605,8 +537,21 @@ except Exception:
                         local notif_icon="dialog-warning"
                         [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
 
-                        notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" \
-                            "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating."
+                        if notify-send --help 2>&1 | grep -q "\-\-action"; then
+                            local wait_script
+                            wait_script=$(cat <<EOF
+$(declare -f launch_detached)
+action=\$(notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating.")
+if [[ "\$action" == "default" ]]; then
+    launch_detached xdg-open "https://archlinux.org/"
+fi
+EOF
+)
+                            launch_detached bash -c "$wait_script"
+                        else
+                            notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" \
+                                "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating."
+                        fi
                     fi
                     echo "$news_ts" > "$NEWS_CACHE"
                 fi
@@ -651,6 +596,47 @@ get_current_mirror() {
     local mirror
     mirror=$(awk -F/ '/^Server[ \t]*=/ {print $3; exit}' /etc/pacman.d/mirrorlist 2>/dev/null)
     echo "${mirror:-Unknown}"
+}
+
+launch_detached() {
+    if [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
+        systemd-run --user --quiet --collect "$@"
+    elif command -v setsid >/dev/null 2>&1; then
+        setsid -f "$@" >/dev/null 2>&1
+    else
+        nohup "$@" >/dev/null 2>&1 &
+        disown 2>/dev/null || true
+    fi
+}
+
+launch_updater_gui() {
+    local script_bin="${SCRIPT_BIN:-$(realpath "$(command -v "$0" || echo "$0")")}"
+
+    if [[ -n "$TERMINAL" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
+        launch_detached $TERMINAL -e "$script_bin"
+        return
+    fi
+
+    if command -v xdg-terminal-exec >/dev/null 2>&1; then
+        launch_detached xdg-terminal-exec "$script_bin"
+        return
+    fi
+
+    local terms=(
+        "alacritty -e" "kitty" "konsole -e" "gnome-terminal --"
+        "xfce4-terminal -x" "terminator -x" "tilix -e" "foot"
+        "wezterm start --" "qterminal -e" "lxterminal -e"
+        "mate-terminal -x" "xterm -e"
+    )
+
+    for term_cmd in "${terms[@]}"; do
+        local bin="${term_cmd%% *}"
+        if command -v "$bin" >/dev/null 2>&1; then
+            local term_arr=($term_cmd)
+            launch_detached "${term_arr[@]}" "$script_bin"
+            return
+        fi
+    done
 }
 
 refresh_mirrors() {
@@ -1548,9 +1534,24 @@ if [[ "$DAEMON_MODE" == true ]]; then
             notif_icon="software-update-available"
             [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
 
-            notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" \
-                "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install."
             echo "$pkg_count" > "$CACHE_FILE"
+
+            if notify-send --help 2>&1 | grep -q "\-\-action"; then
+                wait_script=$(cat <<EOF
+export TERMINAL="$TERMINAL"
+export SCRIPT_BIN="$(realpath "$(command -v "$0" || echo "$0")")"
+$(declare -f launch_detached launch_updater_gui)
+action=\$(notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" --action="default=Update Now" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install.")
+if [[ "\$action" == "default" ]]; then
+    launch_updater_gui
+fi
+EOF
+)
+                launch_detached bash -c "$wait_script"
+            else
+                notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" \
+                    "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install."
+            fi
         fi
     fi
     exit 0
@@ -1678,6 +1679,28 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     fi
 
     if $RUN_STANDARD; then
+        echo -e "${blue}${bold}Updating keyrings to prevent signature errors...${reset}"
+        keyrings=("archlinux-keyring")
+
+        if pacman -Qq cachyos-keyring &>/dev/null; then
+            keyrings+=("cachyos-keyring")
+        fi
+        if pacman -Qq cachyos-trusted &>/dev/null; then
+            keyrings+=("cachyos-trusted")
+        fi
+        if pacman -Qq endeavouros-keyring &>/dev/null; then
+            keyrings+=("endeavouros-keyring")
+        fi
+
+        sudo pacman -Sy --needed --noconfirm "${keyrings[@]}" 2>&1
+        key_exit=$?
+
+        if [[ $key_exit -eq 0 ]]; then
+            echo -e "${green}Keyrings are up to date.${reset}\n"
+        else
+            echo -e "${yellow}Warning: Failed to update keyrings. Proceeding anyway...${reset}\n"
+        fi
+
         if { $HAS_EOS || $HAS_CACHY; } && $HAS_TOPGRADE; then
             if $HAS_EOS; then tool_name="eos-update"; else tool_name="arch-update"; fi
 
@@ -1764,7 +1787,7 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     if $UPDATE_SUCCESS; then
         rm -f "${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-notify-cache-${USER:-$(id -un)}"
 
-        if [[ "${ENABLE_BACKGROUND_CHECK,,}" == "true" ]]; then
+        if [[ "${ENABLE_BACKGROUND_CHECK,,}" == "true" ]] && command -v systemctl >/dev/null 2>&1; then
             systemctl --user restart arch-smart-update.timer >/dev/null 2>&1
         fi
 
