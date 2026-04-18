@@ -1044,7 +1044,7 @@ if [[ -z "$updates" ]]; then
     fi
 
     if [[ "$DAEMON_MODE" == true ]]; then
-        rm -f "${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-notify-cache-${USER:-$(id -un)}"
+        rm -f "$CONFIG_DIR/updates.cache"
     fi
 
     exit 0
@@ -1568,7 +1568,7 @@ if [[ -n "$ignored_updates" ]]; then
 fi
 
 if [[ "$DAEMON_MODE" == true ]]; then
-    CACHE_FILE="${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-notify-cache-${USER:-$(id -un)}"
+    CACHE_FILE="$CONFIG_DIR/updates.cache"
 
     if [[ "$GLOBAL_ADVISOR_SAFE" == true ]] && (( pkg_count > 0 )) && command -v notify-send >/dev/null 2>&1; then
         OLD_COUNT=0
@@ -1829,7 +1829,7 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     fi
 
     if $UPDATE_SUCCESS; then
-        rm -f "${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-notify-cache-${USER:-$(id -un)}"
+        rm -f "$CONFIG_DIR/updates.cache"
 
         if [[ "${ENABLE_BACKGROUND_CHECK,,}" == "true" ]] && command -v systemctl >/dev/null 2>&1; then
             systemctl --user restart arch-smart-update.timer >/dev/null 2>&1
