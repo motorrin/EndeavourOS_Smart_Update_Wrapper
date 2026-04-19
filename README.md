@@ -184,11 +184,7 @@ Manual *(if you downloaded it to a different folder, change the path accordingly
 
 `sudo rm -f /var/lib/pacman/backup/pacman_database_*.tar.gz`
 
-### 6. Clear temporary update cache files in RAM:
-
-`rm -f ${XDG_RUNTIME_DIR:-/tmp}/arch-smart-update-notify-cache-*`
-
-### 7. Clear AUR helper build cache (if installed via AUR):
+### 6. Clear AUR helper build cache (if installed via AUR):
 
 `rm -rf ~/.cache/yay/arch-smart-update`
 
