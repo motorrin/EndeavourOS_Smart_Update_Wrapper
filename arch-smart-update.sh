@@ -401,6 +401,14 @@ sync_daemon_state() {
 sync_daemon_state
 
 if [[ "$DAEMON_MODE" == true ]]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        while IFS='=' read -r key val; do
+            export "$key=$val"
+        done < <(systemctl --user show-environment 2>/dev/null | grep -E '^(DISPLAY|WAYLAND_DISPLAY|XDG_RUNTIME_DIR|DBUS_SESSION_BUS_ADDRESS)=')
+    fi
+    export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
     NEXT_CHECK_FILE="$CONFIG_DIR/next_check.conf"
     if [[ -f "$NEXT_CHECK_FILE" ]]; then
         NEXT_TS=$(cat "$NEXT_CHECK_FILE" 2>/dev/null)
@@ -620,9 +628,9 @@ if [[ "\$action" == "read" ]]; then
 fi
 EOF
 )
-                            nohup bash -c "$wait_script" >/dev/null 2>&1 &
+                            launch_detached bash -c "$wait_script"
                         else
-                            notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" \
+                            launch_detached notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" \
                                 "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating."
                         fi
                     fi
@@ -681,6 +689,7 @@ launch_detached() {
         [[ -n "$DISPLAY" ]] && env_args+=("-E" "DISPLAY=$DISPLAY")
         [[ -n "$WAYLAND_DISPLAY" ]] && env_args+=("-E" "WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
         [[ -n "$XAUTHORITY" ]] && env_args+=("-E" "XAUTHORITY=$XAUTHORITY")
+        [[ -n "$XDG_RUNTIME_DIR" ]] && env_args+=("-E" "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR")
         [[ -n "$DBUS_SESSION_BUS_ADDRESS" ]] && env_args+=("-E" "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS")
 
         systemd-run --user --quiet --collect "${env_args[@]}" "$@"
@@ -1628,6 +1637,8 @@ if [[ "$DAEMON_MODE" == true ]]; then
         OLD_COUNT=0
         [[ -f "$CACHE_FILE" ]] && OLD_COUNT=$(cat "$CACHE_FILE" 2>/dev/null)
 
+        [[ ! "$OLD_COUNT" =~ ^[0-9]+$ ]] && OLD_COUNT=0
+
         if (( pkg_count != OLD_COUNT )); then
             notif_icon="software-update-available"
             [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
@@ -1646,9 +1657,9 @@ if [[ "\$action" == "update" ]]; then
 fi
 EOF
 )
-                nohup bash -c "$wait_script" >/dev/null 2>&1 &
+                launch_detached bash -c "$wait_script"
             else
-                notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" \
+                launch_detached notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" \
                     "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install."
             fi
         fi
