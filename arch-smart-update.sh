@@ -21,6 +21,10 @@ else
     magenta='' cyan='' white='' gray='' bg_crit='' bg_nuke='' bg_feat=''
 fi
 
+log_step() {
+    echo -e "${dim}[$(date +%T)] $1${reset}"
+}
+
 # --- 1.2 Dependency Check ---
 for cmd in python3 tar awk stat fuser curl; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -518,10 +522,6 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --- 4. Helper Functions ---
-log_step() {
-    echo -e "${dim}[$(date +%T)] $1${reset}"
-}
-
 get_update_type() {
     local old=$1
     local new=$2
@@ -724,10 +724,39 @@ launch_detached() {
         systemd-run --user --quiet --collect "${env_args[@]}" "$@" 2>/dev/null && return
     fi
 
+    local env_cmd=(env)
+    local run_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    env_cmd+=("XDG_RUNTIME_DIR=$run_dir")
+    env_cmd+=("DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=$run_dir/bus}")
+    [[ -n "$PATH" ]] && env_cmd+=("PATH=$PATH")
+    [[ -n "$XAUTHORITY" ]] && env_cmd+=("XAUTHORITY=$XAUTHORITY")
+
+    if [[ -z "$WAYLAND_DISPLAY" ]] && [[ -d "$run_dir" ]]; then
+        for sock in "$run_dir"/wayland-[0-9]*; do
+            if [[ -S "$sock" ]]; then
+                env_cmd+=("WAYLAND_DISPLAY=$(basename "$sock")")
+                break
+            fi
+        done
+    elif [[ -n "$WAYLAND_DISPLAY" ]]; then
+        env_cmd+=("WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
+    fi
+
+    if [[ -z "$DISPLAY" ]]; then
+        for sock in /tmp/.X11-unix/X[0-9]*; do
+            if [[ -S "$sock" ]]; then
+                env_cmd+=("DISPLAY=:${sock#/tmp/.X11-unix/X}")
+                break
+            fi
+        done
+    elif [[ -n "$DISPLAY" ]]; then
+        env_cmd+=("DISPLAY=$DISPLAY")
+    fi
+
     if command -v setsid >/dev/null 2>&1; then
-        setsid -f "$@" >/dev/null 2>&1
+        "${env_cmd[@]}" setsid -f "$@" </dev/null >/dev/null 2>&1
     else
-        nohup "$@" >/dev/null 2>&1 &
+        "${env_cmd[@]}" nohup "$@" </dev/null >/dev/null 2>&1 &
         disown 2>/dev/null || true
     fi
 }
