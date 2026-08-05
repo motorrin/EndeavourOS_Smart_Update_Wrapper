@@ -310,30 +310,46 @@ if [[ "${1:-}" == "--reconfigure" ]]; then
         fi
     fi
 
+    if curl -sI --connect-timeout 2 --max-time 4 "https://raw.githubusercontent.com" >/dev/null 2>&1; then
+        manifest_updated=false
+        create_temp_file MANIFEST_TMP "manifest"
+        manifest_url="https://raw.githubusercontent.com/motorrin/arch-smart-update/main/manifest.sha256"
+        manifest_target=$(bypass_cdn_cache "$manifest_url")
+        if curl -sLfo "$MANIFEST_TMP" --connect-timeout 2 --max-time 4 "$manifest_target"; then
+            if grep -qE '^[a-f0-9]{64}[[:space:]]+' "$MANIFEST_TMP"; then
+                mv "$MANIFEST_TMP" "$CONFIG_DIR/manifest.sha256"
+                MANIFEST_TMP=""
+                manifest_updated=true
+            else
+                rm -f "$MANIFEST_TMP"
+                MANIFEST_TMP=""
+                echo -e "${yellow}Warning: Downloaded manifest has an invalid format. Skipping config updates to prevent verification failures.${reset}"
+            fi
+        else
+            rm -f "$MANIFEST_TMP"
+            MANIFEST_TMP=""
+            echo -e "${yellow}Warning: Failed to update manifest.sha256. Skipping config updates to prevent verification failures.${reset}"
+        fi
+
+        if [[ -f "$CONFIG_DIR/manifest.sha256" ]]; then
+            if [ "$manifest_updated" = true ] || [ ! -f "$SETTINGS_DEFAULT" ] || [ ! -f "$PKG_CONF" ] || [ ! -f "$DAEMON_TEMPLATE" ] || [ ! -f "$ICON_PATH" ]; then
+                update_from_github "$SETTINGS_DEFAULT" "https://raw.githubusercontent.com/motorrin/arch-smart-update/main/settings.conf" "PROMPT_MIRROR_REFRESH"
+                update_from_github "$PKG_CONF" "https://raw.githubusercontent.com/motorrin/arch-smart-update/main/packages.conf" "NUCLEAR_PKGS"
+                update_from_github "$DAEMON_TEMPLATE" "https://raw.githubusercontent.com/motorrin/arch-smart-update/main/daemon.template" "[TimerTemplate]"
+                update_from_github "$ICON_PATH" "https://raw.githubusercontent.com/motorrin/arch-smart-update/main/ASU.png" ""
+            fi
+        elif [[ ! -f "$SETTINGS_DEFAULT" ]]; then
+            echo -e "${yellow}Warning: Manifest verification failed and local settings.default.conf is missing.${reset}"
+        fi
+    fi
+
+    if [[ ! -f "$SETTINGS_CONF" && -f "$SETTINGS_DEFAULT" ]]; then
+        cp "$SETTINGS_DEFAULT" "$SETTINGS_CONF"
+        chmod 600 "$SETTINGS_CONF"
+    fi
+
     if [[ -f "$SETTINGS_CONF" ]]; then
         real_settings_conf=$(realpath "$SETTINGS_CONF" 2>/dev/null || echo "$SETTINGS_CONF")
-        if [[ ! -f "$SETTINGS_DEFAULT" ]]; then
-            echo -e "${yellow}Local settings.default.conf not found. Attempting template download...${reset}"
-            if curl -sI --connect-timeout 2 --max-time 4 "https://raw.githubusercontent.com" >/dev/null 2>&1; then
-                MANIFEST_TMP=""
-                create_temp_file MANIFEST_TMP "manifest"
-                manifest_url="https://raw.githubusercontent.com/motorrin/arch-smart-update/main/manifest.sha256"
-                manifest_target=$(bypass_cdn_cache "$manifest_url")
-                if curl -sLfo "$MANIFEST_TMP" --connect-timeout 2 --max-time 4 "$manifest_target"; then
-                    if grep -qE '^[a-f0-9]{64}[[:space:]]+' "$MANIFEST_TMP"; then
-                        mv "$MANIFEST_TMP" "$CONFIG_DIR/manifest.sha256"
-                        MANIFEST_TMP=""
-                    else
-                        rm -f "$MANIFEST_TMP"
-                        MANIFEST_TMP=""
-                    fi
-                else
-                    rm -f "$MANIFEST_TMP"
-                    MANIFEST_TMP=""
-                fi
-                update_from_github "$SETTINGS_DEFAULT" "https://raw.githubusercontent.com/motorrin/arch-smart-update/main/settings.conf" "PROMPT_MIRROR_REFRESH"
-            fi
-        fi
 
         if [[ -f "$SETTINGS_DEFAULT" ]]; then
             python3 - "$real_settings_conf" "$SETTINGS_DEFAULT" "${real_settings_conf}.tmp" <<'EOF'
@@ -1484,22 +1500,32 @@ get_type_color() {
     esac
 }
 
+AUR_RPC_CACHE=""
+AUR_RPC_CACHE_SET=false
+
 fetch_aur_updates_rpc() {
-    python3 -c '
+    if [[ "${AUR_RPC_CACHE_SET:-false}" == "true" ]]; then
+        return 0
+    fi
+    AUR_RPC_CACHE=$(python3 -c '
 import urllib.request, json, sys, subprocess, urllib.parse
 try:
-    res = subprocess.run(["pacman", "-Qm"], capture_output=True, text=True, check=True)
-    local_pkgs = {line.split()[0]: line.split()[1] for line in res.stdout.strip().split("\n") if len(line.split()) >= 2}
-    if not local_pkgs: sys.exit(0)
+    res = subprocess.run(["pacman", "-Qm"], capture_output=True, text=True)
+    if res.returncode != 0:
+        sys.exit(0)
+    local_pkgs = {line.split()[0]: line.split()[1] for line in res.stdout.strip().splitlines() if len(line.split()) >= 2}
+    if not local_pkgs:
+        sys.exit(0)
     names = list(local_pkgs.keys())
     aur_data = []
     for i in range(0, len(names), 100):
         chunk = names[i:i+100]
         args = "&".join(f"arg[]={urllib.parse.quote(n)}" for n in chunk)
         req = urllib.request.Request(f"https://aur.archlinux.org/rpc/?v=5&type=info&{args}", headers={"User-Agent": "ArchSmartUpdate/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            if data.get("type") != "error": aur_data.extend(data.get("results", []))
+            if data.get("type") != "error":
+                aur_data.extend(data.get("results", []))
     for item in aur_data:
         name, new_ver = item.get("Name"), item.get("Version")
         old_ver = local_pkgs.get(name)
@@ -1507,7 +1533,10 @@ try:
             vc = subprocess.run(["vercmp", new_ver, old_ver], capture_output=True, text=True)
             if vc.returncode == 0 and int(vc.stdout.strip() or 0) > 0:
                 print(f"{name} {old_ver} -> {new_ver}")
-except Exception: pass' 2>/dev/null
+except Exception:
+    pass
+' 2>/dev/null || true)
+    AUR_RPC_CACHE_SET=true
 }
 
 check_arch_news() {
@@ -2248,9 +2277,36 @@ while (( attempt <= MAX_RETRIES )); do
             fi
         fi
 
+        if [[ $PACMAN_EXIT -ne 0 ]]; then
+            if $DAEMON_MODE; then
+                log_step "Network or mirror synchronization error in background mode. Postponing."
+                handle_daemon_sync_fail
+                exit 0
+            fi
+
+            echo -e "\n${yellow}Could not synchronize remote package databases (Offline or mirror error).${reset}"
+            echo -ne "${white}Continue anyway using local state? [y/N]: ${reset}"
+            read -r force_cont
+            if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
+                echo -e "${red}Update aborted by user.${reset}"
+                exit 1
+            fi
+            IS_OFFLINE_MODE=true
+            if [[ -d /var/lib/pacman/sync ]]; then
+                mkdir -p "$CHECK_DB/sync"
+                cp -a /var/lib/pacman/sync/. "$CHECK_DB/sync/" 2>/dev/null || true
+                chmod -R u+rw "$CHECK_DB/sync" 2>/dev/null || true
+            fi
+            if ! find "$CHECK_DB/sync" -mindepth 1 -name "*.db" -print -quit 2>/dev/null | grep -q .; then
+                echo -e "${red}No usable local package databases found in /var/lib/pacman/sync.${reset}"
+                exit 1
+            fi
+            break
+        fi
+
         if (( err_count >= 15 )); then
             if $DAEMON_MODE; then
-                echo "Network/Mirror error in background mode. Retrying next cycle."
+                log_step "Mirror synchronization warnings in background mode. Postponing."
                 handle_daemon_sync_fail
                 exit 0
             fi
@@ -2265,16 +2321,8 @@ while (( attempt <= MAX_RETRIES )); do
             break
         fi
 
-        if [[ $PACMAN_EXIT -ne 0 ]]; then
-            echo -e "${red}Error: Could not sync databases.${reset}"
-            if [[ "$DAEMON_MODE" == true ]]; then
-                    handle_daemon_sync_fail
-            fi
-            exit 1
-        else
-            echo -e "${yellow}Proceeding despite mirror warnings...${reset}"
-            break
-        fi
+        echo -e "${yellow}Proceeding despite mirror warnings...${reset}"
+        break
     fi
 done
 
@@ -2282,7 +2330,18 @@ if ! $DAEMON_MODE; then
     sudo chown -R "$(id -u):$(id -g)" "$CHECK_DB"
 fi
 
-if [[ "$DAEMON_MODE" == true ]]; then
+if ! find "$CHECK_DB/sync" -mindepth 1 -name "*.db" -print -quit 2>/dev/null | grep -q .; then
+    if $DAEMON_MODE; then
+        log_step "Error: No package databases found in sync directory."
+        handle_daemon_sync_fail
+        exit 1
+    fi
+    echo -e "${red}Error: No local package databases found in /var/lib/pacman/sync.${reset}"
+    echo -e "${yellow}Please run 'sudo pacman -Sy' while online to initialize package databases.${reset}"
+    exit 1
+fi
+
+if [[ "$DAEMON_MODE" == true && $PACMAN_EXIT -eq 0 ]]; then
     handle_daemon_sync_success
 fi
 
@@ -2301,14 +2360,15 @@ ignored_pkgs=$(echo "$ignored_pkgs" | sed '/^$/d' | sort -u || true)
 repo_updates=$(LC_ALL=C pacman -Qu --dbpath "$CHECK_DB" --color never || true)
 
 aur_updates=""
-if [[ -n "$AUR_HELPER" ]]; then
+if [[ "${IS_OFFLINE_MODE:-false}" != "true" ]]; then
     if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku|aura)$ ]]; then
         if aur_raw=$("${HELPER_CMD[@]}" -Qua --dbpath "$CHECK_DB" --color never 2>/dev/null) && [[ -n "$aur_raw" ]]; then
             aur_updates="$aur_raw"
         fi
     else
-        if aur_raw=$(fetch_aur_updates_rpc) && [[ -n "$aur_raw" ]]; then
-            aur_updates="$aur_raw"
+        fetch_aur_updates_rpc
+        if [[ -n "$AUR_RPC_CACHE" ]]; then
+            aur_updates="$AUR_RPC_CACHE"
         fi
     fi
 fi
@@ -2426,17 +2486,17 @@ if [[ -n "$repo_pkgs" ]]; then
     done < <(echo "$repo_pkgs" | xargs -r env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never 2>/dev/null | parse_metadata "")
 fi
 
-if [[ -n "$aur_pkgs" && -n "$AUR_HELPER" ]]; then
+if [[ -n "$aur_pkgs" ]]; then
     log_step "Fetching AUR metadata..."
     if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku|aura)$ ]]; then
         while IFS='' read -r line; do
             NEW_DATA["${line%%~|~*}"]="${line#*~|~}"
-        done < <(echo "$aur_pkgs" | xargs -r env LC_ALL=C "${HELPER_CMD[@]}" -Si 2>/dev/null | parse_metadata "AUR")
+        done < <(printf "%s\n" "$aur_pkgs" | xargs -r env LC_ALL=C "${HELPER_CMD[@]}" -Si 2>/dev/null | parse_metadata "AUR")
     else
         while IFS='' read -r line; do
             NEW_DATA["${line%%~|~*}"]="${line#*~|~}"
-        done < <(echo "$aur_pkgs" | python3 -c '
-import urllib.request, json, sys, urllib.parse
+        done < <(printf "%s\n" "$aur_pkgs" | python3 -c '
+import urllib.request, json, sys, urllib.parse, datetime
 try:
     names = [line.strip() for line in sys.stdin if line.strip()]
     if not names: sys.exit(0)
@@ -2445,15 +2505,28 @@ try:
         chunk = names[i:i+100]
         args = "&".join(f"arg[]={urllib.parse.quote(n)}" for n in chunk)
         req = urllib.request.Request(f"https://aur.archlinux.org/rpc/?v=5&type=info&{args}", headers={"User-Agent": "ArchSmartUpdate/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if data.get("type") != "error": aur_data.extend(data.get("results", []))
     for item in aur_data:
         name = item.get("Name")
-        desc = item.get("Description", "").replace("|", " ").replace("\t", " ").replace("~", " ")
-        print(f"{name}~|~AUR|N/A|N/A|{desc}")
+        if not name:
+            continue
+        last_mod = item.get("LastModified")
+        date_str = "N/A"
+        if last_mod:
+            try:
+                date_str = datetime.datetime.fromtimestamp(int(last_mod), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            except Exception:
+                pass
+        raw_desc = item.get("Description") or ""
+        desc = raw_desc.replace("\n", " ").replace("\r", " ").replace("|", " ").replace("\t", " ").replace("~", " ")
+        print(f"{name}~|~AUR|{date_str}|N/A|{desc}")
 except Exception: pass' 2>/dev/null)
     fi
+    while read -r pkg; do
+        [[ -n "$pkg" && -z "${NEW_DATA[$pkg]:-}" ]] && NEW_DATA["$pkg"]="AUR|N/A|N/A|"
+    done <<< "$aur_pkgs"
 fi
 
 log_step "Fetching local metadata (pacman -Qi)..."
@@ -3050,13 +3123,16 @@ fi
 check_pending_updates() {
     local check_mode="${1:-all}"
     local pending aur_pending=""
+    AUR_RPC_CACHE=""
+    AUR_RPC_CACHE_SET=false
     pending=$(LC_ALL=C pacman -Qu 2>/dev/null || true)
 
-    if [[ "$check_mode" != "repo_only" && -n "$AUR_HELPER" ]]; then
+    if [[ "$check_mode" != "repo_only" && "${IS_OFFLINE_MODE:-false}" != "true" ]]; then
         if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku|aura)$ ]]; then
             aur_pending=$("${HELPER_CMD[@]}" -Qua --color never 2>/dev/null || true)
         else
-            aur_pending=$(fetch_aur_updates_rpc || true)
+            fetch_aur_updates_rpc
+            aur_pending="$AUR_RPC_CACHE"
         fi
 
         if [[ -n "$aur_pending" ]]; then
@@ -3088,7 +3164,9 @@ done
 HAS_TOPGRADE=false
 command -v topgrade &>/dev/null && HAS_TOPGRADE=true
 
-if [[ ${#CUSTOM_CMDS[@]} -gt 0 ]]; then
+if [[ "${IS_OFFLINE_MODE:-false}" == "true" && ${#CUSTOM_CMDS[@]} -eq 0 ]]; then
+    PROMPT_CMD="sudo pacman -Su"
+elif [[ ${#CUSTOM_CMDS[@]} -gt 0 ]]; then
     if [[ ${#CUSTOM_CMDS[@]} -eq 1 ]]; then
         PROMPT_CMD="${CUSTOM_CMDS[0]}"
     else
@@ -3164,9 +3242,14 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
         done
 
         if $UPDATE_SUCCESS && [[ "$RUN_STANDARD" == false ]]; then
-            if [[ -n "$(check_pending_updates)" ]]; then
+            check_mode="all"
+            [[ -z "$AUR_HELPER" ]] && check_mode="repo_only"
+            if [[ -n "$(check_pending_updates "$check_mode")" ]]; then
                 echo -e "\n${yellow}Custom commands finished successfully, but standard pacman updates were skipped.${reset}"
                 echo -e "${dim}To update the system too, answer 'Y' to the prompt or add 'yay -Syu' to CUSTOM_CMDS.${reset}"
+            elif [[ -z "$AUR_HELPER" && -n "$(check_pending_updates)" ]]; then
+                echo -e "\n${yellow}Custom commands finished successfully for official repository packages.${reset}"
+                echo -e "${yellow}Note: AUR packages were skipped because no AUR helper is installed.${reset}"
             fi
         fi
 
@@ -3176,136 +3259,179 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     fi
 
     if $RUN_STANDARD; then
-        echo -e "${blue}${bold}Updating keyrings to prevent signature errors...${reset}"
-        keyrings=("archlinux-keyring")
-
-        if pacman -Qq cachyos-keyring &>/dev/null; then
-            keyrings+=("cachyos-keyring")
-        fi
-        if pacman -Qq cachyos-trusted &>/dev/null; then
-            keyrings+=("cachyos-trusted")
-        fi
-        if pacman -Qq endeavouros-keyring &>/dev/null; then
-            keyrings+=("endeavouros-keyring")
-        fi
-
-        sudo pacman -Sy --needed --noconfirm "${keyrings[@]}" 2>&1
-        key_exit=$?
-
-        if [[ $key_exit -eq 0 ]]; then
-            echo -e "${green}Keyrings are up to date.${reset}\n"
-        else
-            echo -e "${yellow}Warning: Failed to update keyrings. Proceeding anyway...${reset}\n"
-        fi
-
-        if [[ -n "$BEST_UPDATE_TOOL" && "$HAS_TOPGRADE" == "true" ]]; then
-            tool_name="$BEST_UPDATE_TOOL"
-
-            echo -e "${blue}${bold}Running $tool_name (Keyrings & Packages)...${reset}"
-            execute_update_task "$tool_name"
+        if [[ "${IS_OFFLINE_MODE:-false}" == "true" ]]; then
+            echo -e "${yellow}Offline mode active: Skipping keyring database sync and external update wrappers.${reset}\n"
+            echo -e "${blue}${bold}Running offline system update (sudo pacman -Su)...${reset}"
+            execute_update_task "sudo pacman -Su"
             core_exit=$?
 
-            pending_updates=$(check_pending_updates "repo_only")
-
-            if [[ -z "$pending_updates" && $core_exit -eq 0 ]]; then
-                echo -e "\n${green}Core updates applied successfully.${reset}"
-                echo -e "\n${blue}${bold}Running Topgrade (Firmware, Flatpaks, Dotfiles)...${reset}\n"
-                execute_update_task "topgrade"
-                topgrade_exit=$?
+            if [[ $core_exit -eq 0 && -z "$(check_pending_updates "repo_only")" ]]; then
                 UPDATE_SUCCESS=true
-                if [[ $topgrade_exit -ne 0 ]]; then
-                    echo -e "\n${yellow}Warning: Topgrade finished with exit code $topgrade_exit (some secondary updates may have been skipped).${reset}"
-                fi
+                echo -e "\n${green}Official repository packages updated successfully from local cache.${reset}"
             else
-                echo -e "\n${yellow}$tool_name was cancelled or did not fully apply updates.${reset}"
-                echo -ne "${white}Run topgrade anyway? (Flatpaks/AUR etc) [y/N]: ${reset}"
-                read -r force_extra
-                if [[ "$force_extra" =~ ^[Yy]$ ]]; then
+                echo -e "\n${red}Offline update failed or left unapplied packages.${reset}"
+            fi
+        else
+            echo -e "${blue}${bold}Updating keyrings to prevent signature errors...${reset}"
+            keyrings=("archlinux-keyring")
+
+            if pacman -Qq cachyos-keyring &>/dev/null; then
+                keyrings+=("cachyos-keyring")
+            fi
+            if pacman -Qq cachyos-trusted &>/dev/null; then
+                keyrings+=("cachyos-trusted")
+            fi
+            if pacman -Qq endeavouros-keyring &>/dev/null; then
+                keyrings+=("endeavouros-keyring")
+            fi
+
+            sudo pacman -Sy --needed --noconfirm "${keyrings[@]}" 2>&1
+            key_exit=$?
+
+            if [[ $key_exit -eq 0 ]]; then
+                echo -e "${green}Keyrings are up to date.${reset}\n"
+            else
+                echo -e "${yellow}Warning: Failed to update keyrings. Proceeding anyway...${reset}\n"
+            fi
+
+            if [[ -n "$BEST_UPDATE_TOOL" && "$HAS_TOPGRADE" == "true" ]]; then
+                tool_name="$BEST_UPDATE_TOOL"
+
+                echo -e "${blue}${bold}Running $tool_name (Keyrings & Packages)...${reset}"
+                execute_update_task "$tool_name"
+                core_exit=$?
+
+                pending_updates=$(check_pending_updates "repo_only")
+
+                if [[ $core_exit -eq 0 && -z "$pending_updates" ]]; then
+                    echo -e "\n${green}Core updates applied successfully.${reset}"
+                    echo -e "\n${blue}${bold}Running Topgrade (Firmware, Flatpaks, Dotfiles)...${reset}\n"
                     execute_update_task "topgrade"
                     topgrade_exit=$?
-                    if [[ $topgrade_exit -eq 0 ]] || [[ -z "$(check_pending_updates "repo_only")" ]]; then
-                        UPDATE_SUCCESS=true
-                        if [[ $topgrade_exit -ne 0 ]]; then
-                            echo -e "\n${yellow}Warning: Topgrade exited with code $topgrade_exit, but core system updates were successfully applied.${reset}"
-                        fi
-                    else
-                        echo -e "\n${red}Topgrade failed with exit code $topgrade_exit.${reset}"
+                    UPDATE_SUCCESS=true
+                    if [[ $topgrade_exit -ne 0 ]]; then
+                        echo -e "\n${yellow}Warning: Topgrade finished with exit code $topgrade_exit (some secondary updates may have been skipped).${reset}"
+                    fi
+                    if [[ -z "$AUR_HELPER" && -n "$(check_pending_updates)" ]]; then
+                        echo -e "\n${yellow}Note: AUR packages were skipped because no AUR helper (e.g. yay/paru) is installed.${reset}"
                     fi
                 else
-                    echo -e "${dim}Skipping extra updates.${reset}\n"
-                fi
-            fi
-
-        elif [[ -n "$BEST_UPDATE_TOOL" ]]; then
-            tool_name="$BEST_UPDATE_TOOL"
-
-            echo -e "${blue}${bold}Running $tool_name...${reset}\n"
-            execute_update_task "$tool_name"
-            core_exit=$?
-
-            pending_updates=$(check_pending_updates)
-            if [[ $core_exit -eq 0 && -z "$pending_updates" ]]; then
-                UPDATE_SUCCESS=true
-            else
-                if [[ -n "$pending_updates" && -n "$AUR_HELPER" ]]; then
-                    echo -e "\n${yellow}$tool_name did not fully apply all updates (likely AUR packages remaining).${reset}"
-
-                    aur_flags="-Syu"
-                    if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku)$ && $core_exit -eq 0 ]]; then
-                        aur_flags="-Sua"
-                    elif [[ "$HELPER_BIN" == "rua" ]]; then
-                        aur_flags="upgrade"
-                    fi
-
-                    echo -ne "${white}Run $HELPER_BIN to apply remaining updates? [Y/n]: ${reset}"
-                    if read -r force_aur; then
-                        if [[ "$force_aur" =~ ^[Yy]$ || -z "$force_aur" ]]; then
-                            execute_update_task "$AUR_HELPER $aur_flags"
-
-                            if [[ $? -eq 0 && -z "$(check_pending_updates)" ]]; then
-                                UPDATE_SUCCESS=true
-                            else
-                                echo -e "\n${red}Some updates are still pending or failed.${reset}"
+                    echo -e "\n${yellow}$tool_name was cancelled or did not fully apply updates.${reset}"
+                    echo -ne "${white}Run topgrade anyway? (Flatpaks/AUR etc) [y/N]: ${reset}"
+                    read -r force_extra
+                    if [[ "$force_extra" =~ ^[Yy]$ ]]; then
+                        execute_update_task "topgrade"
+                        topgrade_exit=$?
+                        pending_repo_after=$(check_pending_updates "repo_only")
+                        if [[ -z "$pending_repo_after" ]]; then
+                            UPDATE_SUCCESS=true
+                            if [[ $topgrade_exit -ne 0 ]]; then
+                                echo -e "\n${yellow}Warning: Topgrade exited with code $topgrade_exit, but repository updates were successfully applied.${reset}"
+                            fi
+                            if [[ -z "$AUR_HELPER" && -n "$(check_pending_updates)" ]]; then
+                                echo -e "\n${yellow}Note: AUR packages were skipped because no AUR helper (e.g. yay/paru) is installed.${reset}"
                             fi
                         else
-                            echo -e "${dim}Skipping remaining updates.${reset}\n"
+                            echo -e "\n${red}Topgrade finished with exit code $topgrade_exit, and repository updates remain unapplied.${reset}"
+                        fi
+                    else
+                        echo -e "${dim}Skipping extra updates.${reset}\n"
+                    fi
+                fi
+
+            elif [[ -n "$BEST_UPDATE_TOOL" ]]; then
+                tool_name="$BEST_UPDATE_TOOL"
+
+                echo -e "${blue}${bold}Running $tool_name...${reset}\n"
+                execute_update_task "$tool_name"
+                core_exit=$?
+
+                pending_updates=$(check_pending_updates)
+                pending_repo=$(check_pending_updates "repo_only")
+
+                if [[ $core_exit -eq 0 && -z "$pending_updates" ]]; then
+                    UPDATE_SUCCESS=true
+                elif [[ $core_exit -eq 0 && -z "$pending_repo" ]]; then
+                    if [[ -z "$AUR_HELPER" ]]; then
+                        UPDATE_SUCCESS=true
+                        echo -e "\n${yellow}Official repository packages updated successfully via $tool_name.${reset}"
+                        echo -e "${yellow}Note: AUR packages were skipped because no AUR helper (e.g. yay/paru) is installed.${reset}"
+                    else
+                        aur_flags="-Syu"
+                        if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku)$ ]]; then
+                            aur_flags="-Sua"
+                        elif [[ "$HELPER_BIN" == "rua" ]]; then
+                            aur_flags="upgrade"
+                        fi
+
+                        echo -ne "${white}Run $HELPER_BIN to apply remaining updates? [Y/n]: ${reset}"
+                        if read -r force_aur; then
+                            if [[ "$force_aur" =~ ^[Yy]$ || -z "$force_aur" ]]; then
+                                execute_update_task "$AUR_HELPER $aur_flags"
+                                aur_task_exit=$?
+
+                                if [[ $aur_task_exit -eq 0 && -z "$(check_pending_updates)" ]]; then
+                                    UPDATE_SUCCESS=true
+                                else
+                                    echo -e "\n${red}Some updates are still pending or failed.${reset}"
+                                fi
+                            else
+                                UPDATE_SUCCESS=true
+                                echo -e "\n${yellow}Official repository packages updated successfully. AUR updates skipped by user.${reset}"
+                            fi
                         fi
                     fi
-                elif [[ -n "$pending_updates" ]]; then
-                    echo -e "\n${red}Updates remaining, but no AUR helper detected to process them.${reset}"
-                fi
-            fi
-
-        elif [[ "$HAS_TOPGRADE" == "true" ]]; then
-            echo -e "${blue}${bold}Running Topgrade (System, AUR, Firmware, etc.)...${reset}\n"
-            execute_update_task "topgrade"
-            topgrade_exit=$?
-            if [[ $topgrade_exit -eq 0 ]] || [[ -z "$(check_pending_updates "repo_only")" ]]; then
-                UPDATE_SUCCESS=true
-                if [[ $topgrade_exit -ne 0 ]]; then
-                    echo -e "\n${yellow}Warning: Topgrade exited with code $topgrade_exit, but core system updates were successfully applied.${reset}"
-                fi
-            else
-                echo -e "\n${red}Topgrade failed with exit code $topgrade_exit.${reset}"
-            fi
-
-        else
-            echo -e "${blue}${bold}Running standard system update...${reset}"
-            if [[ -n "$AUR_HELPER" ]]; then
-                if [[ "$HELPER_BIN" == "rua" ]]; then
-                    execute_update_task "sudo pacman -Syu && rua upgrade"
-                    core_exit=$?
                 else
-                    execute_update_task "$AUR_HELPER -Syu"
+                    if [[ $core_exit -ne 0 ]]; then
+                        echo -e "\n${red}Core repository updates were not fully applied by $tool_name (exit code: $core_exit).${reset}"
+                    elif [[ -n "$pending_repo" ]]; then
+                        echo -e "\n${red}Repository updates remain unapplied after running $tool_name.${reset}"
+                    fi
+                fi
+
+            elif [[ "$HAS_TOPGRADE" == "true" ]]; then
+                echo -e "${blue}${bold}Running Topgrade (System, AUR, Firmware, etc.)...${reset}\n"
+                execute_update_task "topgrade"
+                topgrade_exit=$?
+                pending_repo=$(check_pending_updates "repo_only")
+                pending_all=$(check_pending_updates "all")
+                if [[ $topgrade_exit -eq 0 && -z "$pending_all" ]]; then
+                    UPDATE_SUCCESS=true
+                elif [[ $topgrade_exit -eq 0 && -z "$pending_repo" ]]; then
+                    UPDATE_SUCCESS=true
+                    if [[ -z "$AUR_HELPER" ]]; then
+                        echo -e "\n${yellow}Official repository packages updated successfully via Topgrade.${reset}"
+                        echo -e "${yellow}Note: AUR packages were skipped because no AUR helper (e.g. yay/paru) is installed.${reset}"
+                    else
+                        echo -e "\n${yellow}Official repository packages updated successfully via Topgrade.${reset}"
+                        echo -e "${yellow}Note: Some AUR package updates remain unapplied.${reset}"
+                    fi
+                else
+                    echo -e "\n${red}Topgrade finished with exit code $topgrade_exit or system updates remain unapplied.${reset}"
+                fi
+
+            else
+                echo -e "${blue}${bold}Running standard system update...${reset}"
+                if [[ -n "$AUR_HELPER" ]]; then
+                    if [[ "$HELPER_BIN" == "rua" ]]; then
+                        execute_update_task "sudo pacman -Syu && rua upgrade"
+                        core_exit=$?
+                    else
+                        execute_update_task "$AUR_HELPER -Syu"
+                        core_exit=$?
+                    fi
+                else
+                    execute_update_task "sudo pacman -Syu"
                     core_exit=$?
                 fi
-            else
-                execute_update_task "sudo pacman -Syu"
-                core_exit=$?
-            fi
 
-            if [[ $core_exit -eq 0 && -z "$(check_pending_updates)" ]]; then
-                UPDATE_SUCCESS=true
+                if [[ $core_exit -eq 0 && -z "$(check_pending_updates)" ]]; then
+                    UPDATE_SUCCESS=true
+                elif [[ $core_exit -eq 0 && -z "$AUR_HELPER" && -z "$(check_pending_updates "repo_only")" ]]; then
+                    UPDATE_SUCCESS=true
+                    echo -e "\n${yellow}Official repository packages updated successfully.${reset}"
+                    echo -e "${yellow}Note: AUR packages were skipped because no AUR helper (e.g. yay/paru) is installed.${reset}"
+                fi
             fi
         fi
     fi
@@ -3316,7 +3442,13 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
         if touch "$lock_file" 2>/dev/null && exec {lock_fd}<"$lock_file" 2>/dev/null; then
             flock -x "$lock_fd"
         fi
-        rm -f "$CONFIG_DIR/updates.cache"
+        remaining_pkgs=$(check_pending_updates "all" 2>/dev/null || true)
+        if [[ -n "$remaining_pkgs" ]]; then
+            rem_count=$(grep -c . <<< "$remaining_pkgs")
+            echo "$rem_count" > "$CONFIG_DIR/updates.cache"
+        else
+            rm -f "$CONFIG_DIR/updates.cache"
+        fi
         rm -f "$CONFIG_DIR/next_check.conf"
         if [[ -n "${lock_fd:-}" ]]; then
             exec {lock_fd}<&-
