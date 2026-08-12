@@ -99,8 +99,13 @@ The script relies on standard system utilities, but make sure you have the follo
 <a name="installation"></a>
 ## 🛠️ Installation
 
-## Option 1: Install from AUR
-Warning! Due to AUR technical work, this package cannot be installed now due to version mismatch! Please wait until I can push the latest version to AUR.
+## Option 1: Install from AUR (Recommended)
+The script is officially available in the Arch User Repository. You can install it using your favorite AUR helper:
+
+For yay:  
+`yay -S arch-smart-update`  
+For paru:  
+`paru -S arch-smart-update`
 
 ## Option 2: Manual Installation
 If you choose to install the script manually, keep in mind that you will also have to manually download new versions to ensure stability:
