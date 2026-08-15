@@ -183,14 +183,20 @@ launch_detached() {
     local env_wrapper=(env)
     if [[ -n "${DETECTED_WAYLAND:-}" ]]; then
         env_wrapper+=("WAYLAND_DISPLAY=$DETECTED_WAYLAND")
+    elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        env_wrapper+=("WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
     else
         env_wrapper+=("-u" "WAYLAND_DISPLAY")
     fi
+
     if [[ -n "${DETECTED_DISPLAY:-}" ]]; then
         env_wrapper+=("DISPLAY=$DETECTED_DISPLAY")
+    elif [[ -n "${DISPLAY:-}" ]]; then
+        env_wrapper+=("DISPLAY=$DISPLAY")
     else
         env_wrapper+=("-u" "DISPLAY")
     fi
+
     [[ -n "${run_dir:-}" ]] && env_wrapper+=("XDG_RUNTIME_DIR=$run_dir")
     [[ -n "${dbus_addr:-}" ]] && env_wrapper+=("DBUS_SESSION_BUS_ADDRESS=$dbus_addr")
     [[ -n "${PATH:-}" ]] && env_wrapper+=("PATH=$PATH")
@@ -200,12 +206,10 @@ launch_detached() {
     [[ -n "${XDG_CURRENT_DESKTOP:-}" ]] && env_wrapper+=("XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP")
     [[ -n "${XDG_SESSION_TYPE:-}" ]] && env_wrapper+=("XDG_SESSION_TYPE=$XDG_SESSION_TYPE")
 
-    if [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
-        systemd-run --user --quiet --collect -- "${env_wrapper[@]}" "$@" 2>/dev/null && return
-    fi
-
     if command -v setsid >/dev/null 2>&1; then
         "${env_wrapper[@]}" setsid -f "$@" </dev/null >/dev/null 2>&1
+    elif [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
+        systemd-run --user --quiet --collect -- "${env_wrapper[@]}" "$@" 2>/dev/null && return
     else
         "${env_wrapper[@]}" nohup "$@" </dev/null >/dev/null 2>&1 &
         disown 2>/dev/null || true
@@ -1356,7 +1360,10 @@ if [[ "$DAEMON_MODE" == true ]]; then
     export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
 
     if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" || ( -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ) ]]; then
-        for pid in $(pgrep -u "$EUID" 2>/dev/null | sort -rn); do
+        target_pids=$(pgrep -u "$EUID" -x "niri|sway|hyprland|wayfire|river|kwin_wayland|gnome-shell|mako|dunst|swaync|fnott|waybar" 2>/dev/null || true)
+        all_pids=$(pgrep -u "$EUID" 2>/dev/null | sort -rn || true)
+        
+        for pid in $target_pids $all_pids; do
             if [[ -r "/proc/$pid/environ" ]]; then
                 p_disp=""
                 p_wayland=""
@@ -1379,7 +1386,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
                     esac
                 done < <(cat "/proc/$pid/environ" 2>/dev/null)
 
-                if [[ -n "$p_disp" || -n "$p_wayland" ]]; then
+                if [[ -n "$p_disp" || -n "$p_wayland" || -n "$p_dbus" ]]; then
                     [[ -z "${DISPLAY:-}" && -n "$p_disp" ]] && export DISPLAY="$p_disp"
                     [[ -z "${WAYLAND_DISPLAY:-}" && -n "$p_wayland" ]] && export WAYLAND_DISPLAY="$p_wayland"
                     [[ -z "${XAUTHORITY:-}" && -n "$p_xauth" ]] && export XAUTHORITY="$p_xauth"
@@ -3180,9 +3187,13 @@ fi
 notif_icon="${main_notif_icon}"
 
 if [[ "\$use_single_action" == "true" ]]; then
-    action=\$(notify-send -a "Arch Smart Update" -u normal -i "\$notif_icon" --action="default=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install.")
+    action=\$(notify-send -a "Arch Smart Update" -u normal -i "\$notif_icon" --action="default=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
 else
-    action=\$(notify-send -a "Arch Smart Update" -u normal -i "\$notif_icon" --action="default=Update Now" --action="update=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install.")
+    action=\$(notify-send -a "Arch Smart Update" -u normal -i "\$notif_icon" --action="default=Update Now" --action="update=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
+fi
+
+if [[ -z "\$action" ]]; then
+    notify-send -a "Arch Smart Update" -u normal -i "\$notif_icon" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." >/dev/null 2>&1 || true
 fi
 
 action_clean=\$(echo "\$action" | tr -d ' \n\r')
