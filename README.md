@@ -44,7 +44,7 @@ The script also supports distribution-specific utilities on **EndeavourOS** (suc
 - **🚨 IgnorePkg Conflict Checker:** If you have frozen packages via `pacman.conf`, the script simulates the update in the background and warns you of any dependency breakages caused by skipped packages.
 - **🧹 Automated System Cleanup:** Optional post-update cleanup that safely removes orphaned packages, clears partial downloads, empties the pacman/AUR cache, vacuums the systemd journal (keeping 100M), and clears user thumbnail caches.
 - **🧩 Seamless Ecosystem Integration:** Full, native support for popular AUR helpers (`yay`, `paru`, `pikaur`, `aura`, `rua`, `trizen`, `pacaur`, `pakku`), an automatic built-in **AUR RPC API v5** client when no helper is installed, and compatibility with `eos-update`, `cachy-update`, and `topgrade` (to handle Flatpaks, firmware, and dotfiles).
-- **👻 Background Daemon & Notifications:** You can allow the script to run in the background using a user systemd timer. It silently checks for updates using `fakeroot` (no sudo required) and sends interactive desktop notifications via `libnotify`. Features boot-session awareness for Arch News to prevent spam and alerts after 3 consecutive mirror connection failures.
+- **👻 Background Daemon & Notifications:** You can allow the script to run in the background using a user systemd timer. It silently checks for updates using `fakeroot` (no sudo required) and sends interactive desktop notifications via `libnotify`. Native support for Wayland compositors and X11 desktop environments. Features boot-session awareness for Arch News to prevent spam and alerts after 3 consecutive mirror connection failures.
 
 ---
 
@@ -87,7 +87,7 @@ Whenever the master configuration on GitHub is updated, the script will quietly 
 
 The script relies on standard Arch base system utilities:
 
-`sudo pacman -S bash python pacman tar gawk coreutils curl zstd grep sed`
+`sudo pacman -S bash python pacman pacman-contrib tar gawk coreutils curl zstd grep sed`
 
 **Optional Dependencies:**
 - `base-devel` (specifically `fakeroot`) — Required for the background daemon to safely synchronize databases without sudo.
