@@ -73,52 +73,141 @@ create_temp_dir() {
     eval "$var_name=\$tmp"
 }
 
-launch_detached() {
-    if [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
-        local env_args=()
-        [[ -n "${DISPLAY:-}" ]] && env_args+=("-E" "DISPLAY=$DISPLAY")
-        [[ -n "${WAYLAND_DISPLAY:-}" ]] && env_args+=("-E" "WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
-        [[ -n "${XAUTHORITY:-}" ]] && env_args+=("-E" "XAUTHORITY=$XAUTHORITY")
-        [[ -n "${XDG_RUNTIME_DIR:-}" ]] && env_args+=("-E" "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR")
-        [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]] && env_args+=("-E" "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS")
-        [[ -n "${XDG_CURRENT_DESKTOP:-}" ]] && env_args+=("-E" "XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP")
-        [[ -n "${XDG_DATA_DIRS:-}" ]] && env_args+=("-E" "XDG_DATA_DIRS=$XDG_DATA_DIRS")
-        [[ -n "${XDG_CONFIG_DIRS:-}" ]] && env_args+=("-E" "XDG_CONFIG_DIRS=$XDG_CONFIG_DIRS")
-        [[ -n "${PATH:-}" ]] && env_args+=("-E" "PATH=$PATH")
-        systemd-run --user --quiet --collect "${env_args[@]+"${env_args[@]}"}" "$@" 2>/dev/null && return
+test_socket_alive() {
+    local sock_target="${1:-}"
+    [[ -S "$sock_target" ]] || return 1
+    python3 - "$sock_target" <<'PYEOF' 2>/dev/null
+import socket, sys
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        s.connect(sys.argv[1])
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+PYEOF
+}
+
+detect_display_session() {
+    local sess_type="${XDG_SESSION_TYPE:-}"
+    local desktop_env="${XDG_CURRENT_DESKTOP:-}"
+
+    if [[ -z "$sess_type" ]] && command -v loginctl >/dev/null 2>&1; then
+        local sess_id="${XDG_SESSION_ID:-}"
+        if [[ -z "$sess_id" ]]; then
+            sess_id=$(loginctl show-user "$EUID" --property=Display 2>/dev/null | cut -d= -f2 || true)
+        fi
+        if [[ -z "$sess_id" || "$sess_id" == "0" ]]; then
+            sess_id=$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$EUID" '$2==u || $3==u {print $1; exit}')
+        fi
+        if [[ -n "$sess_id" ]]; then
+            sess_type=$(loginctl show-session "$sess_id" --property=Type 2>/dev/null | cut -d= -f2 || true)
+        fi
     fi
-    local env_cmd=(env)
+
+    sess_type="${sess_type,,}"
     local run_dir="${XDG_RUNTIME_DIR:-/run/user/$EUID}"
-    env_cmd+=("XDG_RUNTIME_DIR=$run_dir")
-    env_cmd+=("DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=$run_dir/bus}")
-    [[ -n "${PATH:-}" ]] && env_cmd+=("PATH=$PATH")
-    [[ -n "${XAUTHORITY:-}" ]] && env_cmd+=("XAUTHORITY=$XAUTHORITY")
-    [[ -n "${XDG_DATA_DIRS:-}" ]] && env_cmd+=("XDG_DATA_DIRS=$XDG_DATA_DIRS")
-    [[ -n "${XDG_CONFIG_DIRS:-}" ]] && env_cmd+=("XDG_CONFIG_DIRS=$XDG_CONFIG_DIRS")
-    if [[ -z "${WAYLAND_DISPLAY:-}" ]] && [[ -d "$run_dir" ]]; then
-        for sock in "$run_dir"/wayland-[0-9]*; do
-            if [[ -S "$sock" ]]; then
-                env_cmd+=("WAYLAND_DISPLAY=$(basename "$sock")")
-                break
-            fi
-        done
-    elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
-        env_cmd+=("WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
+    local effective_wayland="${WAYLAND_DISPLAY:-}"
+    local effective_x11="${DISPLAY:-}"
+
+    if [[ -n "$effective_wayland" ]]; then
+        local w_path="$effective_wayland"
+        [[ "$w_path" != /* ]] && w_path="$run_dir/$effective_wayland"
+        if ! test_socket_alive "$w_path"; then
+            effective_wayland=""
+        fi
     fi
-    if [[ -z "${DISPLAY:-}" ]]; then
+
+    if [[ -z "$effective_wayland" && "$sess_type" != "x11" && -d "$run_dir" ]]; then
+        if [[ "$sess_type" == "wayland" ]] || ! [[ "${desktop_env,,}" =~ (xfce|mate|i3|bspwm) ]]; then
+            for sock in "$run_dir"/wayland-[0-9]*; do
+                if [[ -S "$sock" && -O "$sock" ]]; then
+                    if test_socket_alive "$sock"; then
+                        effective_wayland="$(basename "$sock")"
+                        break
+                    fi
+                fi
+            done
+        fi
+    fi
+
+    if [[ -n "$effective_x11" ]]; then
+        local x11_part="${effective_x11#*:}"
+        local x11_num="${x11_part%%.*}"
+        if [[ "$effective_x11" == :* ]]; then
+            if [[ ! -S "/tmp/.X11-unix/X${x11_num}" ]] || ! test_socket_alive "/tmp/.X11-unix/X${x11_num}"; then
+                effective_x11=""
+            fi
+        else
+            if [[ -S "/tmp/.X11-unix/X${x11_num}" ]] && ! test_socket_alive "/tmp/.X11-unix/X${x11_num}"; then
+                effective_x11=""
+            fi
+        fi
+    fi
+
+    if [[ -z "$effective_x11" && -d "/tmp/.X11-unix" ]]; then
         for sock in /tmp/.X11-unix/X[0-9]*; do
-            if [[ -S "$sock" ]]; then
-                env_cmd+=("DISPLAY=:${sock#/tmp/.X11-unix/X}")
-                break
+            if [[ -S "$sock" && ( -O "$sock" || -w "$sock" ) ]]; then
+                if test_socket_alive "$sock"; then
+                    effective_x11=":${sock#/tmp/.X11-unix/X}"
+                    break
+                fi
             fi
         done
-    elif [[ -n "${DISPLAY:-}" ]]; then
-        env_cmd+=("DISPLAY=$DISPLAY")
     fi
-    if command -v setsid >/dev/null 2>&1; then
-        "${env_cmd[@]}" setsid -f "$@" </dev/null >/dev/null 2>&1
+
+    if [[ -n "$effective_wayland" ]]; then
+        if [[ "$sess_type" == "x11" ]] || { [[ "$sess_type" != "wayland" ]] && [[ "${desktop_env,,}" =~ (xfce|mate|i3|bspwm) ]]; }; then
+            effective_wayland=""
+        fi
+    fi
+
+    if [[ -n "$sess_type" && "$sess_type" != "unspecified" && "$sess_type" != "tty" ]]; then
+        export XDG_SESSION_TYPE="$sess_type"
+    elif [[ -n "$effective_wayland" ]]; then
+        export XDG_SESSION_TYPE="wayland"
+    elif [[ -n "$effective_x11" ]]; then
+        export XDG_SESSION_TYPE="x11"
+    fi
+
+    export DETECTED_WAYLAND="$effective_wayland"
+    export DETECTED_DISPLAY="$effective_x11"
+}
+
+launch_detached() {
+    detect_display_session
+
+    local run_dir="${XDG_RUNTIME_DIR:-/run/user/$EUID}"
+    local dbus_addr="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$run_dir/bus}"
+
+    local env_wrapper=(env)
+    if [[ -n "${DETECTED_WAYLAND:-}" ]]; then
+        env_wrapper+=("WAYLAND_DISPLAY=$DETECTED_WAYLAND")
     else
-        "${env_cmd[@]}" nohup "$@" </dev/null >/dev/null 2>&1 &
+        env_wrapper+=("-u" "WAYLAND_DISPLAY")
+    fi
+    if [[ -n "${DETECTED_DISPLAY:-}" ]]; then
+        env_wrapper+=("DISPLAY=$DETECTED_DISPLAY")
+    else
+        env_wrapper+=("-u" "DISPLAY")
+    fi
+    [[ -n "${run_dir:-}" ]] && env_wrapper+=("XDG_RUNTIME_DIR=$run_dir")
+    [[ -n "${dbus_addr:-}" ]] && env_wrapper+=("DBUS_SESSION_BUS_ADDRESS=$dbus_addr")
+    [[ -n "${PATH:-}" ]] && env_wrapper+=("PATH=$PATH")
+    [[ -n "${XAUTHORITY:-}" ]] && env_wrapper+=("XAUTHORITY=$XAUTHORITY")
+    [[ -n "${XDG_DATA_DIRS:-}" ]] && env_wrapper+=("XDG_DATA_DIRS=$XDG_DATA_DIRS")
+    [[ -n "${XDG_CONFIG_DIRS:-}" ]] && env_wrapper+=("XDG_CONFIG_DIRS=$XDG_CONFIG_DIRS")
+    [[ -n "${XDG_CURRENT_DESKTOP:-}" ]] && env_wrapper+=("XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP")
+    [[ -n "${XDG_SESSION_TYPE:-}" ]] && env_wrapper+=("XDG_SESSION_TYPE=$XDG_SESSION_TYPE")
+
+    if [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
+        systemd-run --user --quiet --collect -- "${env_wrapper[@]}" "$@" 2>/dev/null && return
+    fi
+
+    if command -v setsid >/dev/null 2>&1; then
+        "${env_wrapper[@]}" setsid -f "$@" </dev/null >/dev/null 2>&1
+    else
+        "${env_wrapper[@]}" nohup "$@" </dev/null >/dev/null 2>&1 &
         disown 2>/dev/null || true
     fi
 }
@@ -199,7 +288,7 @@ prompt_user() {
     local user_input=""
     if ! $DAEMON_MODE; then
         echo -ne "${white}${msg} [${options}]: ${reset}"
-        read -r user_input </dev/tty
+        read -r user_input </dev/tty || user_input=""
     fi
     [[ -n "$user_input" ]] && declare -g "$var_name=$user_input"
 }
@@ -750,6 +839,7 @@ validate_user_conf() {
                     read -r trust_ans </dev/tty || trust_ans="n"
                     if [[ "$trust_ans" =~ ^[Yy]$ ]]; then
                         sha256sum "$file" | cut -d' ' -f1 > "$trust_file"
+                        chmod 600 "$trust_file" 2>/dev/null || true
                     else
                         echo -e "${red}Error: Custom commands untrusted. Refusing to load settings.conf.${reset}"
                         echo -ne "${white}Would you like to remove these custom commands? [Y/n]: ${reset}"
@@ -1260,7 +1350,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
     if command -v systemctl >/dev/null 2>&1; then
         while IFS='=' read -r key val; do
             export "$key=$val"
-        done < <(systemctl --user show-environment 2>/dev/null | grep -E '^(DISPLAY|WAYLAND_DISPLAY|XDG_RUNTIME_DIR|DBUS_SESSION_BUS_ADDRESS|XDG_CURRENT_DESKTOP|XAUTHORITY|XDG_DATA_DIRS|XDG_CONFIG_DIRS)=')
+        done < <(systemctl --user show-environment 2>/dev/null | grep -E '^(DISPLAY|WAYLAND_DISPLAY|XDG_RUNTIME_DIR|DBUS_SESSION_BUS_ADDRESS|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|XAUTHORITY|XDG_DATA_DIRS|XDG_CONFIG_DIRS)=')
     fi
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$EUID}"
     export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
@@ -1272,6 +1362,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
                 p_wayland=""
                 p_xauth=""
                 p_desktop=""
+                p_session_type=""
                 p_dbus=""
                 p_data=""
                 p_config=""
@@ -1281,6 +1372,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
                         WAYLAND_DISPLAY) p_wayland="$env_val" ;;
                         XAUTHORITY) p_xauth="$env_val" ;;
                         XDG_CURRENT_DESKTOP) p_desktop="$env_val" ;;
+                        XDG_SESSION_TYPE) p_session_type="$env_val" ;;
                         DBUS_SESSION_BUS_ADDRESS) p_dbus="$env_val" ;;
                         XDG_DATA_DIRS) p_data="$env_val" ;;
                         XDG_CONFIG_DIRS) p_config="$env_val" ;;
@@ -1292,6 +1384,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
                     [[ -z "${WAYLAND_DISPLAY:-}" && -n "$p_wayland" ]] && export WAYLAND_DISPLAY="$p_wayland"
                     [[ -z "${XAUTHORITY:-}" && -n "$p_xauth" ]] && export XAUTHORITY="$p_xauth"
                     [[ -z "${XDG_CURRENT_DESKTOP:-}" && -n "$p_desktop" ]] && export XDG_CURRENT_DESKTOP="$p_desktop"
+                    [[ -z "${XDG_SESSION_TYPE:-}" && -n "$p_session_type" ]] && export XDG_SESSION_TYPE="$p_session_type"
                     [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -n "$p_dbus" ]] && export DBUS_SESSION_BUS_ADDRESS="$p_dbus"
                     [[ -z "${XDG_DATA_DIRS:-}" && -n "$p_data" ]] && export XDG_DATA_DIRS="$p_data"
                     [[ -z "${XDG_CONFIG_DIRS:-}" && -n "$p_config" ]] && export XDG_CONFIG_DIRS="$p_config"
@@ -1305,28 +1398,21 @@ if [[ "$DAEMON_MODE" == true ]]; then
         export XAUTHORITY="${USER_HOME}/.Xauthority"
     fi
 
-    if [[ -z "${WAYLAND_DISPLAY:-}" ]] && [[ -d "${XDG_RUNTIME_DIR:-}" ]]; then
-        for sock in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
-            if [[ -S "$sock" ]]; then
-                WAYLAND_DISPLAY="$(basename "$sock")"
-                export WAYLAND_DISPLAY
-                break
-            fi
-        done
-    fi
-    if [[ -z "${DISPLAY:-}" ]]; then
-        for sock in /tmp/.X11-unix/X[0-9]*; do
-            if [[ -S "$sock" ]]; then
-                export DISPLAY=":${sock:16}"
-                break
-            fi
-        done
-    fi
-
-    session_type="${XDG_SESSION_TYPE:-}"
-    desktop_env="${XDG_CURRENT_DESKTOP:-}"
-    if [[ "${session_type,,}" == "x11" ]] || [[ "${desktop_env,,}" =~ (xfce|lxqt|mate|cinnamon|i3) ]]; then
+    detect_display_session
+    if [[ -n "${DETECTED_WAYLAND:-}" ]]; then
+        export WAYLAND_DISPLAY="$DETECTED_WAYLAND"
+    else
         unset WAYLAND_DISPLAY
+    fi
+    if [[ -n "${DETECTED_DISPLAY:-}" ]]; then
+        export DISPLAY="$DETECTED_DISPLAY"
+    else
+        unset DISPLAY
+    fi
+    if [[ -n "${DETECTED_WAYLAND:-}" && -z "${XDG_SESSION_TYPE:-}" ]]; then
+        export XDG_SESSION_TYPE="wayland"
+    elif [[ -n "${DETECTED_DISPLAY:-}" && -z "${XDG_SESSION_TYPE:-}" ]]; then
+        export XDG_SESSION_TYPE="x11"
     fi
 
     if [[ "${SETTINGS_VALIDATION_FAILED:-false}" == "true" ]]; then
@@ -1624,17 +1710,28 @@ EOF
                             TMP_NEWS=$(mktemp --suffix=.sh "${XDG_RUNTIME_DIR:-/tmp}/asu_news.XXXXXX")
                             local news_notif_icon="dialog-warning"
                             [[ -f "$ICON_PATH" ]] && news_notif_icon="$ICON_PATH"
+                            local esc_disp esc_wayland esc_xauth esc_dbus esc_run esc_desk esc_sess esc_cache
+                            esc_disp=$(printf '%q' "${DETECTED_DISPLAY:-${DISPLAY:-}}")
+                            esc_wayland=$(printf '%q' "${DETECTED_WAYLAND:-${WAYLAND_DISPLAY:-}}")
+                            esc_xauth=$(printf '%q' "${XAUTHORITY:-}")
+                            esc_dbus=$(printf '%q' "${DBUS_SESSION_BUS_ADDRESS:-}")
+                            esc_run=$(printf '%q' "${XDG_RUNTIME_DIR:-}")
+                            esc_desk=$(printf '%q' "${XDG_CURRENT_DESKTOP:-}")
+                            esc_sess=$(printf '%q' "${XDG_SESSION_TYPE:-}")
+                            esc_cache=$(printf '%q' "$NEWS_CACHE")
                             cat <<EOF > "$TMP_NEWS"
 #!/bin/bash
 trap 'rm -f "\$0"' EXIT
-export DISPLAY="${DISPLAY:-}"
-export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}"
-export XAUTHORITY="${XAUTHORITY:-}"
-export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}"
-export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-}"
-export XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-export XDG_CONFIG_DIRS="${XDG_CONFIG_DIRS:-/etc/xdg}"
+if [[ -n ${esc_disp} ]]; then export DISPLAY=${esc_disp}; else unset DISPLAY; fi
+if [[ -n ${esc_wayland} ]]; then export WAYLAND_DISPLAY=${esc_wayland}; else unset WAYLAND_DISPLAY; fi
+if [[ -n ${esc_xauth} ]]; then export XAUTHORITY=${esc_xauth}; fi
+if [[ -n ${esc_dbus} ]]; then export DBUS_SESSION_BUS_ADDRESS=${esc_dbus}; fi
+if [[ -n ${esc_run} ]]; then export XDG_RUNTIME_DIR=${esc_run}; fi
+if [[ -n ${esc_desk} ]]; then export XDG_CURRENT_DESKTOP=${esc_desk}; fi
+if [[ -n ${esc_sess} ]]; then export XDG_SESSION_TYPE=${esc_sess}; fi
+export NEWS_CACHE=${esc_cache}
+export XDG_DATA_DIRS="\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export XDG_CONFIG_DIRS="\${XDG_CONFIG_DIRS:-/etc/xdg}"
 export PATH="\$PATH:/usr/local/bin:/usr/bin:/bin"
 
 notif_daemon=\$(dbus-send --session --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation 2>/dev/null | awk -F'"' '/string/ {print \$2; exit}')
@@ -1657,9 +1754,9 @@ fi
 action_clean=\$(echo "\$action" | tr -d ' \n\r')
 
 if [[ "\$action_clean" == "silence" || ( "\$use_single_action" == "true" && "\$action_clean" == "1" ) || ( "\$use_single_action" == "false" && "\$action_clean" == "2" ) ]]; then
-    echo "${news_ts}|silenced" > "$NEWS_CACHE"
+    echo "${news_ts}|silenced" > "\$NEWS_CACHE"
 elif [[ "\$action_clean" == "read" || "\$action_clean" == "default" || "\$action_clean" == "0" || ( "\$use_single_action" == "false" && "\$action_clean" == "1" ) ]]; then
-    echo "${news_ts}|silenced" > "$NEWS_CACHE"
+    echo "${news_ts}|silenced" > "\$NEWS_CACHE"
 
     open_url() {
         local url="\$1"
@@ -1667,7 +1764,7 @@ elif [[ "\$action_clean" == "read" || "\$action_clean" == "default" || "\$action
         run_cmd() {
             local cmd="\$1"
             local arg="\$2"
-            if command -v systemd-run >/dev/null 2>&1; then
+            if [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
                 local env_args=()
                 [[ -n "\$DISPLAY" ]] && env_args+=("-E" "DISPLAY=\$DISPLAY")
                 [[ -n "\$WAYLAND_DISPLAY" ]] && env_args+=("-E" "WAYLAND_DISPLAY=\$WAYLAND_DISPLAY")
@@ -1675,11 +1772,17 @@ elif [[ "\$action_clean" == "read" || "\$action_clean" == "default" || "\$action
                 [[ -n "\$XDG_RUNTIME_DIR" ]] && env_args+=("-E" "XDG_RUNTIME_DIR=\$XDG_RUNTIME_DIR")
                 [[ -n "\$DBUS_SESSION_BUS_ADDRESS" ]] && env_args+=("-E" "DBUS_SESSION_BUS_ADDRESS=\$DBUS_SESSION_BUS_ADDRESS")
                 [[ -n "\$XDG_CURRENT_DESKTOP" ]] && env_args+=("-E" "XDG_CURRENT_DESKTOP=\$XDG_CURRENT_DESKTOP")
+                [[ -n "\$XDG_SESSION_TYPE" ]] && env_args+=("-E" "XDG_SESSION_TYPE=\$XDG_SESSION_TYPE")
                 [[ -n "\$XDG_DATA_DIRS" ]] && env_args+=("-E" "XDG_DATA_DIRS=\$XDG_DATA_DIRS")
                 [[ -n "\$XDG_CONFIG_DIRS" ]] && env_args+=("-E" "XDG_CONFIG_DIRS=\$XDG_CONFIG_DIRS")
-                systemd-run --user --quiet --collect "\${env_args[@]}" "\$cmd" "\$arg" >/dev/null 2>&1 &
+                [[ -n "\$PATH" ]] && env_args+=("-E" "PATH=\$PATH")
+                systemd-run --user --quiet --collect "\${env_args[@]}" -- "\$cmd" "\$arg" >/dev/null 2>&1 && return
+            fi
+            if command -v setsid >/dev/null 2>&1; then
+                setsid -f "\$cmd" "\$arg" </dev/null >/dev/null 2>&1
             else
-                "\$cmd" "\$arg" >/dev/null 2>&1 &
+                nohup "\$cmd" "\$arg" </dev/null >/dev/null 2>&1 &
+                disown 2>/dev/null || true
             fi
         }
 
@@ -1692,13 +1795,16 @@ elif [[ "\$action_clean" == "read" || "\$action_clean" == "default" || "\$action
             run_cmd "\$default_browser" "\$url"
             return 0
         fi
+        if command -v xdg-open >/dev/null 2>&1; then
+            run_cmd "xdg-open" "\$url"
+            return 0
+        fi
         for browser in "firefox" "chromium" "google-chrome-stable" "librewolf" "brave" "waterfox" "opera" "epiphany" "falkon"; do
             if command -v "\$browser" >/dev/null 2>&1; then
                 run_cmd "\$browser" "\$url"
                 return 0
             fi
         done
-        run_cmd "xdg-open" "\$url"
     }
 
     open_url "https://archlinux.org/"
@@ -1769,8 +1875,10 @@ execute_update_task() {
                         if tmp_log=$(mktemp "$safe_tmp_dir/asu_task.XXXXXX" 2>/dev/null); then
                             CURRENT_TMP_LOG="$tmp_log"
                             local wrapper="$cmd"
-                            local first_word
-                            first_word=$(echo "$cmd" | awk '{print $1}')
+                            local first_word=""
+                            if [[ "$cmd" =~ ^[[:space:]]*([^[:space:]]+) ]]; then
+                                first_word="${BASH_REMATCH[1]}"
+                            fi
                             if [[ "$first_word" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku|aura|rua|topgrade|eos-update|cachy-update|arch-update)$ ]]; then
                                 wrapper="sudo -v && $cmd"
                             fi
@@ -1812,7 +1920,7 @@ EOF
 }
 
 check_reboot_needed() {
-    local critical_pkgs="^(linux|nvidia|systemd|wayland|dbus|mesa)(-[a-z0-9-]+)?$|ucode$"
+    local critical_pkgs="^(linux|nvidia|systemd|wayland|dbus|mesa|glibc)(-[a-z0-9-]+)?$|ucode$"
     local log_file
     log_file=$(pacman-conf LogFile 2>/dev/null)
     : "${log_file:=/var/log/pacman.log}"
@@ -2351,17 +2459,17 @@ ignored_pkgs=$(pacman-conf IgnorePkg 2>/dev/null | tr ' ' '\n' || true)
 ignored_groups=$(pacman-conf IgnoreGroup 2>/dev/null | tr ' ' '\n' || true)
 
 if [[ -n "$ignored_groups" ]]; then
-    group_pkgs=$(echo "$ignored_groups" | xargs -r pacman -Sgq 2>/dev/null || true)
+    group_pkgs=$(printf "%s\n" "$ignored_groups" | xargs -r pacman -Sgq 2>/dev/null || true)
     ignored_pkgs="$ignored_pkgs"$'\n'"$group_pkgs"
 fi
 
-ignored_pkgs=$(echo "$ignored_pkgs" | sed '/^$/d' | sort -u || true)
+ignored_pkgs=$(printf "%s\n" "$ignored_pkgs" | sed '/^$/d' | sort -u || true)
 
 repo_updates=$(LC_ALL=C pacman -Qu --dbpath "$CHECK_DB" --color never || true)
 
 aur_updates=""
 if [[ "${IS_OFFLINE_MODE:-false}" != "true" ]]; then
-    if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku|aura)$ ]]; then
+    if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku)$ ]]; then
         if aur_raw=$("${HELPER_CMD[@]}" -Qua --dbpath "$CHECK_DB" --color never 2>/dev/null) && [[ -n "$aur_raw" ]]; then
             aur_updates="$aur_raw"
         fi
@@ -2378,17 +2486,17 @@ if [[ -n "$ignored_pkgs" ]]; then
     awk_base='BEGIN { split(ig, a, "\n"); for (i in a) if(a[i] != "") ign[a[i]]=1 }'
 
     all_raw_updates=$(printf "%s\n%s" "$repo_updates" "$aur_updates" | sed '/^$/d' || true)
-    ignored_updates=$(echo "$all_raw_updates" | awk -v ig="$ignored_pkgs" "$awk_base ign[\$1]" || true)
+    ignored_updates=$(printf "%s\n" "$all_raw_updates" | awk -v ig="$ignored_pkgs" "$awk_base ign[\$1]" || true)
 
-    [[ -n "$repo_updates" ]] && repo_updates=$(echo "$repo_updates" | awk -v ig="$ignored_pkgs" "$awk_base !ign[\$1]" || true)
-    [[ -n "$aur_updates" ]]  && aur_updates=$(echo "$aur_updates" | awk -v ig="$ignored_pkgs" "$awk_base !ign[\$1]" || true)
+    [[ -n "$repo_updates" ]] && repo_updates=$(printf "%s\n" "$repo_updates" | awk -v ig="$ignored_pkgs" "$awk_base !ign[\$1]" || true)
+    [[ -n "$aur_updates" ]]  && aur_updates=$(printf "%s\n" "$aur_updates" | awk -v ig="$ignored_pkgs" "$awk_base !ign[\$1]" || true)
 fi
 
 repo_pkgs=""
 aur_pkgs=""
 
-[[ -n "$repo_updates" ]] && repo_pkgs=$(echo "$repo_updates" | awk '{print $1}')
-[[ -n "$aur_updates" ]] && aur_pkgs=$(echo "$aur_updates" | awk '{print $1}')
+[[ -n "$repo_updates" ]] && repo_pkgs=$(printf "%s\n" "$repo_updates" | awk '{print $1}')
+[[ -n "$aur_updates" ]] && aur_pkgs=$(printf "%s\n" "$aur_updates" | awk '{print $1}')
 
 updates="$repo_updates"
 [[ -n "$aur_updates" ]] && updates="$updates"$'\n'"$aur_updates"
@@ -2457,7 +2565,7 @@ fi
 log_step "Found $pkg_count updates ($aur_count from AUR). Starting detailed analysis..."
 echo -e "${blue}${bold}Analyzing updates: ${white}$pkg_count packages${reset}"
 
-all_pkgs=$(echo "$updates" | awk '{print $1}')
+all_pkgs=$(printf "%s\n" "$updates" | awk '{print $1}')
 
 log_step "Fetching remote metadata (pacman -Si)..."
 declare -A NEW_DATA
@@ -2483,12 +2591,12 @@ parse_metadata() {
 if [[ -n "$repo_pkgs" ]]; then
     while IFS='' read -r line; do
         NEW_DATA["${line%%~|~*}"]="${line#*~|~}"
-    done < <(echo "$repo_pkgs" | xargs -r env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never 2>/dev/null | parse_metadata "")
+    done < <(printf "%s\n" "$repo_pkgs" | xargs -r env LC_ALL=C pacman -Si --dbpath "$CHECK_DB" --color never 2>/dev/null | parse_metadata "")
 fi
 
 if [[ -n "$aur_pkgs" ]]; then
     log_step "Fetching AUR metadata..."
-    if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku|aura)$ ]]; then
+    if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku)$ ]]; then
         while IFS='' read -r line; do
             NEW_DATA["${line%%~|~*}"]="${line#*~|~}"
         done < <(printf "%s\n" "$aur_pkgs" | xargs -r env LC_ALL=C "${HELPER_CMD[@]}" -Si 2>/dev/null | parse_metadata "AUR")
@@ -2533,7 +2641,7 @@ log_step "Fetching local metadata (pacman -Qi)..."
 declare -A OLD_DATA
 while IFS='|' read -r name bdate reason; do
     [[ -z "${OLD_DATA[$name]:-}" ]] && OLD_DATA["$name"]="$bdate|$reason"
-done < <(echo "$all_pkgs" | xargs -r env LC_ALL=C pacman -Qi 2>/dev/null | awk '
+done < <(printf "%s\n" "$all_pkgs" | xargs -r env LC_ALL=C pacman -Qi 2>/dev/null | awk '
     /^Name[ \t]*:/ {n=$0; sub(/^[^:]*:[ \t]*/, "", n)}
     /^Build Date[ \t]*:/ {b=$0; sub(/^[^:]*:[ \t]*/, "", b)}
     /^Install Reason[ \t]*:/ {r=$0; sub(/^[^:]*:[ \t]*/, "", r)}
@@ -3035,19 +3143,27 @@ if [[ "$DAEMON_MODE" == true ]]; then
                 script_bin_esc=$(printf '%q' "${SCRIPT_BIN:-$(realpath "$(command -v "${BASH_SOURCE:-$0}" 2>/dev/null || echo "${BASH_SOURCE:-$0}")")}")
                 main_notif_icon="software-update-available"
                 [[ -f "$ICON_PATH" ]] && main_notif_icon="$ICON_PATH"
+                esc_disp=$(printf '%q' "${DETECTED_DISPLAY:-${DISPLAY:-}}")
+                esc_wayland=$(printf '%q' "${DETECTED_WAYLAND:-${WAYLAND_DISPLAY:-}}")
+                esc_xauth=$(printf '%q' "${XAUTHORITY:-}")
+                esc_dbus=$(printf '%q' "${DBUS_SESSION_BUS_ADDRESS:-}")
+                esc_run=$(printf '%q' "${XDG_RUNTIME_DIR:-}")
+                esc_desk=$(printf '%q' "${XDG_CURRENT_DESKTOP:-}")
+                esc_sess=$(printf '%q' "${XDG_SESSION_TYPE:-}")
                 cat <<EOF > "$TMP_NOTIFY"
 #!/bin/bash
 trap 'rm -f "\$0"' EXIT
-export TERMINAL=${terminal_esc}
+if [[ -n ${terminal_esc} ]]; then export TERMINAL=${terminal_esc}; fi
 export SCRIPT_BIN=${script_bin_esc}
-export DISPLAY="${DISPLAY:-}"
-export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}"
-export XAUTHORITY="${XAUTHORITY:-}"
-export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}"
-export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-}"
-export XDG_DATA_DIRS="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-export XDG_CONFIG_DIRS="${XDG_CONFIG_DIRS:-/etc/xdg}"
+if [[ -n ${esc_disp} ]]; then export DISPLAY=${esc_disp}; else unset DISPLAY; fi
+if [[ -n ${esc_wayland} ]]; then export WAYLAND_DISPLAY=${esc_wayland}; else unset WAYLAND_DISPLAY; fi
+if [[ -n ${esc_xauth} ]]; then export XAUTHORITY=${esc_xauth}; fi
+if [[ -n ${esc_dbus} ]]; then export DBUS_SESSION_BUS_ADDRESS=${esc_dbus}; fi
+if [[ -n ${esc_run} ]]; then export XDG_RUNTIME_DIR=${esc_run}; fi
+if [[ -n ${esc_desk} ]]; then export XDG_CURRENT_DESKTOP=${esc_desk}; fi
+if [[ -n ${esc_sess} ]]; then export XDG_SESSION_TYPE=${esc_sess}; fi
+export XDG_DATA_DIRS="\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export XDG_CONFIG_DIRS="\${XDG_CONFIG_DIRS:-/etc/xdg}"
 export PATH="\$PATH:/usr/local/bin:/usr/bin:/bin"
 export CONFIG_DIR=${config_dir_esc}
 export SILENCE_UPDATES=${silence_updates_esc}
@@ -3088,24 +3204,91 @@ if [[ "\$action_clean" == "silence" || ( "\$use_single_action" == "true" && "\$a
         esac
     fi
     silence_ts=\$(( \$(date +%s) + silence_sec ))
+    lock_file="\${CONFIG_DIR}/.state.lock"
+    lock_fd=""
+    if touch "\$lock_file" 2>/dev/null && exec {lock_fd}<"\$lock_file" 2>/dev/null; then
+        flock -x "\$lock_fd"
+    fi
     echo "\$silence_ts" > "\${CONFIG_DIR}/next_check.conf"
+    if [[ -n "\${lock_fd:-}" ]]; then
+        exec {lock_fd}<&-
+    fi
     exit 0
 elif [[ "\$action_clean" == "update" || "\$action_clean" == "default" || "\$action_clean" == "0" || ( "\$use_single_action" == "false" && "\$action_clean" == "1" ) ]]; then
     rm -f "\$0"
     export ASU_SPAWNED=true
-    if [[ -n "\$TERMINAL" ]] && command -v "\$TERMINAL" >/dev/null 2>&1; then
-        exec "\$TERMINAL" -e "\$SCRIPT_BIN"
-    elif command -v xdg-terminal-exec >/dev/null 2>&1; then
-        exec xdg-terminal-exec "\$SCRIPT_BIN"
-    else
-        for term_cmd in "alacritty -e" "kitty --" "kitty" "konsole -e" "gnome-terminal --" "xfce4-terminal --disable-server -x" "xfce4-terminal -x" "terminator --" "terminator -x" "tilix -e" "foot" "wezterm start --" "qterminal -e" "lxterminal -e" "mate-terminal -x" "xterm -e"; do
-            bin="\${term_cmd%% *}"
-            if command -v "\$bin" >/dev/null 2>&1; then
-                read -ra term_arr <<< "\$term_cmd"
-                exec "\${term_arr[@]}" "\$SCRIPT_BIN"
+
+    spawn_term() {
+        local cmd=("\$@")
+        if [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
+            local env_args=()
+            [[ -n "\$DISPLAY" ]] && env_args+=("-E" "DISPLAY=\$DISPLAY")
+            [[ -n "\$WAYLAND_DISPLAY" ]] && env_args+=("-E" "WAYLAND_DISPLAY=\$WAYLAND_DISPLAY")
+            [[ -n "\$XAUTHORITY" ]] && env_args+=("-E" "XAUTHORITY=\$XAUTHORITY")
+            [[ -n "\$XDG_RUNTIME_DIR" ]] && env_args+=("-E" "XDG_RUNTIME_DIR=\$XDG_RUNTIME_DIR")
+            [[ -n "\$DBUS_SESSION_BUS_ADDRESS" ]] && env_args+=("-E" "DBUS_SESSION_BUS_ADDRESS=\$DBUS_SESSION_BUS_ADDRESS")
+            [[ -n "\$XDG_CURRENT_DESKTOP" ]] && env_args+=("-E" "XDG_CURRENT_DESKTOP=\$XDG_CURRENT_DESKTOP")
+            [[ -n "\$XDG_SESSION_TYPE" ]] && env_args+=("-E" "XDG_SESSION_TYPE=\$XDG_SESSION_TYPE")
+            [[ -n "\$XDG_DATA_DIRS" ]] && env_args+=("-E" "XDG_DATA_DIRS=\$XDG_DATA_DIRS")
+            [[ -n "\$XDG_CONFIG_DIRS" ]] && env_args+=("-E" "XDG_CONFIG_DIRS=\$XDG_CONFIG_DIRS")
+            [[ -n "\$PATH" ]] && env_args+=("-E" "PATH=\$PATH")
+            [[ -n "\$ASU_SPAWNED" ]] && env_args+=("-E" "ASU_SPAWNED=\$ASU_SPAWNED")
+            systemd-run --user --quiet --collect "\${env_args[@]}" -- "\${cmd[@]}" >/dev/null 2>&1 && exit 0
+        fi
+        if command -v setsid >/dev/null 2>&1; then
+            setsid -f "\${cmd[@]}" </dev/null >/dev/null 2>&1
+        else
+            nohup "\${cmd[@]}" </dev/null >/dev/null 2>&1 &
+            disown 2>/dev/null || true
+        fi
+        exit 0
+    }
+
+    if [[ -n "\$TERMINAL" ]]; then
+        read -ra term_custom <<< "\$TERMINAL"
+        if command -v "\${term_custom[0]}" >/dev/null 2>&1; then
+            if (( \${#term_custom[@]} > 1 )); then
+                spawn_term "\${term_custom[@]}" "\$SCRIPT_BIN"
+            elif [[ "\${term_custom[0]}" =~ ^(kitty|gnome-terminal)$ ]]; then
+                spawn_term "\${term_custom[0]}" -- "\$SCRIPT_BIN"
+            elif [[ "\${term_custom[0]}" == "foot" ]]; then
+                spawn_term "\${term_custom[0]}" "\$SCRIPT_BIN"
+            elif [[ "\${term_custom[0]}" == "wezterm" ]]; then
+                spawn_term "\${term_custom[0]}" start -- "\$SCRIPT_BIN"
+            else
+                spawn_term "\${term_custom[0]}" -e "\$SCRIPT_BIN"
             fi
-        done
+        fi
     fi
+
+    if command -v xdg-terminal-exec >/dev/null 2>&1; then
+        spawn_term xdg-terminal-exec "\$SCRIPT_BIN"
+    fi
+
+    term_candidates=(
+        "ghostty -e"
+        "alacritty -e"
+        "kitty --"
+        "konsole -e"
+        "gnome-terminal --"
+        "xfce4-terminal --disable-server -x"
+        "terminator -x"
+        "tilix -e"
+        "foot"
+        "wezterm start --"
+        "qterminal -e"
+        "lxterminal -e"
+        "mate-terminal -x"
+        "xterm -e"
+    )
+
+    for term_entry in "\${term_candidates[@]}"; do
+        read -ra term_arr <<< "\$term_entry"
+        bin="\${term_arr[0]}"
+        if command -v "\$bin" >/dev/null 2>&1; then
+            spawn_term "\${term_arr[@]}" "\$SCRIPT_BIN"
+        fi
+    done
 fi
 EOF
                 chmod +x "$TMP_NOTIFY"
@@ -3128,7 +3311,7 @@ check_pending_updates() {
     pending=$(LC_ALL=C pacman -Qu 2>/dev/null || true)
 
     if [[ "$check_mode" != "repo_only" && "${IS_OFFLINE_MODE:-false}" != "true" ]]; then
-        if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku|aura)$ ]]; then
+        if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku)$ ]]; then
             aur_pending=$("${HELPER_CMD[@]}" -Qua --color never 2>/dev/null || true)
         else
             fetch_aur_updates_rpc
@@ -3180,7 +3363,11 @@ elif [[ -n "$BEST_UPDATE_TOOL" ]]; then
 elif [[ "$HAS_TOPGRADE" == "true" ]]; then
     PROMPT_CMD="topgrade"
 else
-    if [[ -n "$AUR_HELPER" ]]; then
+    if [[ "$HELPER_BIN" == "rua" ]]; then
+        PROMPT_CMD="sudo pacman -Syu && rua upgrade"
+    elif [[ "$HELPER_BIN" == "aura" ]]; then
+        PROMPT_CMD="sudo pacman -Syu && aura -Aua"
+    elif [[ -n "$AUR_HELPER" ]]; then
         PROMPT_CMD="$AUR_HELPER -Syu"
     else
         PROMPT_CMD="sudo pacman -Syu"
@@ -3360,6 +3547,8 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
                         aur_flags="-Syu"
                         if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku)$ ]]; then
                             aur_flags="-Sua"
+                        elif [[ "$HELPER_BIN" == "aura" ]]; then
+                            aur_flags="-Aua"
                         elif [[ "$HELPER_BIN" == "rua" ]]; then
                             aur_flags="upgrade"
                         fi
@@ -3416,6 +3605,9 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
                     if [[ "$HELPER_BIN" == "rua" ]]; then
                         execute_update_task "sudo pacman -Syu && rua upgrade"
                         core_exit=$?
+                    elif [[ "$HELPER_BIN" == "aura" ]]; then
+                        execute_update_task "sudo pacman -Syu && aura -Aua"
+                        core_exit=$?
                     else
                         execute_update_task "$AUR_HELPER -Syu"
                         core_exit=$?
@@ -3466,7 +3658,7 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
             orphans=$(pacman -Qdtq 2>/dev/null)
             if [[ -n "$orphans" ]]; then
                 echo -e "${dim}Removing orphaned packages...${reset}"
-                echo "$orphans" | xargs -r -o sudo pacman -Rns
+                printf "%s\n" "$orphans" | xargs -r -o sudo pacman -Rns
             else
                 echo -e "${dim}No orphaned packages to remove.${reset}"
             fi
@@ -3491,16 +3683,24 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
                 fi
             done
 
-            cleaned_aur="false"
-            for h in "${helpers_to_clean[@]+"${helpers_to_clean[@]}"}"; do
-                if [[ -d "$USER_HOME/.cache/$h" ]]; then
-                    if [[ "$cleaned_aur" == "false" ]]; then
-                        echo -e "${dim}Clearing AUR helper build caches...${reset}"
-                        cleaned_aur="true"
+            user_cache_dir="${XDG_CACHE_HOME:-$USER_HOME/.cache}"
+            if [[ -n "$user_cache_dir" && "$user_cache_dir" != "/" && -d "$user_cache_dir" ]]; then
+                cleaned_aur="false"
+                for h in "${helpers_to_clean[@]+"${helpers_to_clean[@]}"}"; do
+                    if [[ -n "$h" && -d "$user_cache_dir/$h" ]]; then
+                        if [[ "$cleaned_aur" == "false" ]]; then
+                            echo -e "${dim}Clearing AUR helper build caches...${reset}"
+                            cleaned_aur="true"
+                        fi
+                        rm -rf -- "${user_cache_dir:?}/${h:?}" 2>/dev/null
                     fi
-                    rm -rf "$USER_HOME/.cache/$h" 2>/dev/null
+                done
+
+                if [[ -d "$user_cache_dir/thumbnails" ]]; then
+                    echo -e "${dim}Clearing user thumbnail cache...${reset}"
+                    find "$user_cache_dir/thumbnails" -mindepth 1 -delete 2>/dev/null
                 fi
-            done
+            fi
 
             if command -v flatpak >/dev/null 2>&1; then
                 echo -e "${dim}Removing unused Flatpak runtimes...${reset}"
@@ -3509,9 +3709,6 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
 
             echo -e "${dim}Vacuuming systemd journal (keeping 100M)...${reset}"
             sudo journalctl --vacuum-size=100M >/dev/null 2>&1
-
-            echo -e "${dim}Clearing user thumbnail cache...${reset}"
-            find "$USER_HOME/.cache/thumbnails" -mindepth 1 -delete 2>/dev/null
 
             echo -e "${green}System cleanup complete!${reset}\n"
         else
