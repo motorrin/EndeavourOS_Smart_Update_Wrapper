@@ -43,6 +43,7 @@ fi
 exec {ASU_TTY_OUT}>&1 {ASU_TTY_ERR}>&2
 
 DAEMON_MODE=false
+ASU_SPAWNED="${ASU_SPAWNED:-false}"
 if [[ "${1:-}" == "--daemon" || "${1:-}" == "--check" ]]; then
     DAEMON_MODE=true
 fi
@@ -80,7 +81,7 @@ test_socket_alive() {
 import socket, sys
 try:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
+        s.settimeout(0.3)
         s.connect(sys.argv[1])
     sys.exit(0)
 except Exception:
@@ -91,21 +92,6 @@ PYEOF
 detect_display_session() {
     local sess_type="${XDG_SESSION_TYPE:-}"
     local desktop_env="${XDG_CURRENT_DESKTOP:-}"
-
-    if [[ -z "$sess_type" ]] && command -v loginctl >/dev/null 2>&1; then
-        local sess_id="${XDG_SESSION_ID:-}"
-        if [[ -z "$sess_id" ]]; then
-            sess_id=$(loginctl show-user "$EUID" --property=Display 2>/dev/null | cut -d= -f2 || true)
-        fi
-        if [[ -z "$sess_id" || "$sess_id" == "0" ]]; then
-            sess_id=$(loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$EUID" '$2==u || $3==u {print $1; exit}')
-        fi
-        if [[ -n "$sess_id" ]]; then
-            sess_type=$(loginctl show-session "$sess_id" --property=Type 2>/dev/null | cut -d= -f2 || true)
-        fi
-    fi
-
-    sess_type="${sess_type,,}"
     local run_dir="${XDG_RUNTIME_DIR:-/run/user/$EUID}"
     local effective_wayland="${WAYLAND_DISPLAY:-}"
     local effective_x11="${DISPLAY:-}"
@@ -118,56 +104,41 @@ detect_display_session() {
         fi
     fi
 
-    if [[ -z "$effective_wayland" && "$sess_type" != "x11" && -d "$run_dir" ]]; then
-        if [[ "$sess_type" == "wayland" ]] || ! [[ "${desktop_env,,}" =~ (xfce|mate|i3|bspwm) ]]; then
-            for sock in "$run_dir"/wayland-[0-9]*; do
-                if [[ -S "$sock" && -O "$sock" ]]; then
-                    if test_socket_alive "$sock"; then
-                        effective_wayland="$(basename "$sock")"
-                        break
-                    fi
-                fi
-            done
-        fi
+    if [[ -z "$effective_wayland" && -d "$run_dir" ]]; then
+        while IFS= read -r sock; do
+            [[ -z "$sock" ]] && continue
+            if [[ -S "$sock" && -O "$sock" ]] && test_socket_alive "$sock"; then
+                effective_wayland="$(basename "$sock")"
+                break
+            fi
+        done < <(find "$run_dir" -maxdepth 1 -name "wayland-[0-9]*" -type s 2>/dev/null | sort -V -r)
     fi
 
     if [[ -n "$effective_x11" ]]; then
         local x11_part="${effective_x11#*:}"
         local x11_num="${x11_part%%.*}"
-        if [[ "$effective_x11" == :* ]]; then
-            if [[ ! -S "/tmp/.X11-unix/X${x11_num}" ]] || ! test_socket_alive "/tmp/.X11-unix/X${x11_num}"; then
-                effective_x11=""
-            fi
-        else
-            if [[ -S "/tmp/.X11-unix/X${x11_num}" ]] && ! test_socket_alive "/tmp/.X11-unix/X${x11_num}"; then
-                effective_x11=""
-            fi
+        local x11_sock="/tmp/.X11-unix/X${x11_num}"
+        if [[ ! -S "$x11_sock" ]] || ! test_socket_alive "$x11_sock"; then
+            effective_x11=""
         fi
     fi
 
     if [[ -z "$effective_x11" && -d "/tmp/.X11-unix" ]]; then
-        for sock in /tmp/.X11-unix/X[0-9]*; do
-            if [[ -S "$sock" && ( -O "$sock" || -w "$sock" ) ]]; then
-                if test_socket_alive "$sock"; then
-                    effective_x11=":${sock#/tmp/.X11-unix/X}"
-                    break
-                fi
+        while IFS= read -r sock; do
+            [[ -z "$sock" ]] && continue
+            if [[ -S "$sock" && ( -O "$sock" || -w "$sock" ) ]] && test_socket_alive "$sock"; then
+                effective_x11=":${sock#/tmp/.X11-unix/X}"
+                break
             fi
-        done
+        done < <(find /tmp/.X11-unix -maxdepth 1 -name "X[0-9]*" -type s 2>/dev/null | sort -V -r)
     fi
 
     if [[ -n "$effective_wayland" ]]; then
-        if [[ "$sess_type" == "x11" ]] || { [[ "$sess_type" != "wayland" ]] && [[ "${desktop_env,,}" =~ (xfce|mate|i3|bspwm) ]]; }; then
-            effective_wayland=""
-        fi
-    fi
-
-    if [[ -n "$sess_type" && "$sess_type" != "unspecified" && "$sess_type" != "tty" ]]; then
-        export XDG_SESSION_TYPE="$sess_type"
-    elif [[ -n "$effective_wayland" ]]; then
         export XDG_SESSION_TYPE="wayland"
     elif [[ -n "$effective_x11" ]]; then
         export XDG_SESSION_TYPE="x11"
+    elif [[ -n "$sess_type" && "$sess_type" != "unspecified" && "$sess_type" != "tty" ]]; then
+        export XDG_SESSION_TYPE="$sess_type"
     fi
 
     export DETECTED_WAYLAND="$effective_wayland"
@@ -183,20 +154,14 @@ launch_detached() {
     local env_wrapper=(env)
     if [[ -n "${DETECTED_WAYLAND:-}" ]]; then
         env_wrapper+=("WAYLAND_DISPLAY=$DETECTED_WAYLAND")
-    elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
-        env_wrapper+=("WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
     else
         env_wrapper+=("-u" "WAYLAND_DISPLAY")
     fi
-
     if [[ -n "${DETECTED_DISPLAY:-}" ]]; then
         env_wrapper+=("DISPLAY=$DETECTED_DISPLAY")
-    elif [[ -n "${DISPLAY:-}" ]]; then
-        env_wrapper+=("DISPLAY=$DISPLAY")
     else
         env_wrapper+=("-u" "DISPLAY")
     fi
-
     [[ -n "${run_dir:-}" ]] && env_wrapper+=("XDG_RUNTIME_DIR=$run_dir")
     [[ -n "${dbus_addr:-}" ]] && env_wrapper+=("DBUS_SESSION_BUS_ADDRESS=$dbus_addr")
     [[ -n "${PATH:-}" ]] && env_wrapper+=("PATH=$PATH")
@@ -206,12 +171,15 @@ launch_detached() {
     [[ -n "${XDG_CURRENT_DESKTOP:-}" ]] && env_wrapper+=("XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP")
     [[ -n "${XDG_SESSION_TYPE:-}" ]] && env_wrapper+=("XDG_SESSION_TYPE=$XDG_SESSION_TYPE")
 
+    local runner=()
+    [[ "${1:-}" == *.sh ]] && runner=(/bin/bash)
+
     if command -v setsid >/dev/null 2>&1; then
-        "${env_wrapper[@]}" setsid -f "$@" </dev/null >/dev/null 2>&1
+        "${env_wrapper[@]}" setsid -f ${runner[@]+"${runner[@]}"} "$@" </dev/null >/dev/null 2>&1
     elif [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
-        systemd-run --user --quiet --collect -- "${env_wrapper[@]}" "$@" 2>/dev/null && return
+        systemd-run --user --quiet --collect -- "${env_wrapper[@]}" ${runner[@]+"${runner[@]}"} "$@" >/dev/null 2>&1
     else
-        "${env_wrapper[@]}" nohup "$@" </dev/null >/dev/null 2>&1 &
+        "${env_wrapper[@]}" nohup ${runner[@]+"${runner[@]}"} "$@" </dev/null >/dev/null 2>&1 &
         disown 2>/dev/null || true
     fi
 }
@@ -1268,39 +1236,35 @@ sync_daemon_state() {
             local CURRENT_INTERVAL="$CHECK_INTERVAL"
             local NEXT_CHECK_FILE="$CONFIG_DIR/next_check.conf"
             local lock_file="$CONFIG_DIR/.state.lock"
-            local lock_fd=""
 
-            if touch "$lock_file" 2>/dev/null && exec {lock_fd}<"$lock_file" 2>/dev/null; then
-                flock -x "$lock_fd"
-            fi
+            if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+                if flock -w 5 -x 200 2>/dev/null; then
+                    if [[ -f "$NEXT_CHECK_FILE" ]]; then
+                        local file_mtime
+                        file_mtime=$(stat -c %Y "$NEXT_CHECK_FILE" 2>/dev/null || echo 0)
+                        local boot_ts
+                        boot_ts=$(awk '/^btime/ {print $2}' /proc/stat 2>/dev/null || echo 0)
 
-            if [[ -f "$NEXT_CHECK_FILE" ]]; then
-                local file_mtime
-                file_mtime=$(stat -c %Y "$NEXT_CHECK_FILE" 2>/dev/null || echo 0)
-                local boot_ts
-                boot_ts=$(awk '/^btime/ {print $2}' /proc/stat 2>/dev/null || echo 0)
+                        if (( file_mtime > 0 && boot_ts > 0 && file_mtime < boot_ts )); then
+                            rm -f "$NEXT_CHECK_FILE"
+                        fi
+                    fi
 
-                if (( file_mtime > 0 && boot_ts > 0 && file_mtime < boot_ts )); then
-                    rm -f "$NEXT_CHECK_FILE"
+                    if [[ -f "$NEXT_CHECK_FILE" ]]; then
+                        local next_ts
+                        next_ts=$(cat "$NEXT_CHECK_FILE" 2>/dev/null || echo 0)
+                        local now_ts
+                        now_ts=$(date +%s)
+
+                        if [[ "$next_ts" =~ ^[0-9]+$ ]] && (( next_ts > now_ts )); then
+                            local diff_m=$(( (next_ts - now_ts) / 60 + 1 ))
+                            CURRENT_INTERVAL="${diff_m}min"
+                        else
+                            rm -f "$NEXT_CHECK_FILE"
+                        fi
+                    fi
                 fi
-            fi
-
-            if [[ -f "$NEXT_CHECK_FILE" ]]; then
-                local next_ts
-                next_ts=$(cat "$NEXT_CHECK_FILE" 2>/dev/null || echo 0)
-                local now_ts
-                now_ts=$(date +%s)
-
-                if [[ "$next_ts" =~ ^[0-9]+$ ]] && (( next_ts > now_ts )); then
-                    local diff_m=$(( (next_ts - now_ts) / 60 + 1 ))
-                    CURRENT_INTERVAL="${diff_m}min"
-                else
-                    rm -f "$NEXT_CHECK_FILE"
-                fi
-            fi
-
-            if [[ -n "${lock_fd:-}" ]]; then
-                exec {lock_fd}<&-
+                exec 200>&- 2>/dev/null || true
             fi
 
             export SCRIPT_PATH START_DELAY CURRENT_INTERVAL
@@ -1351,19 +1315,31 @@ sync_daemon_state() {
 sync_daemon_state
 
 if [[ "$DAEMON_MODE" == true ]]; then
-    if command -v systemctl >/dev/null 2>&1; then
-        while IFS='=' read -r key val; do
-            export "$key=$val"
-        done < <(systemctl --user show-environment 2>/dev/null | grep -E '^(DISPLAY|WAYLAND_DISPLAY|XDG_RUNTIME_DIR|DBUS_SESSION_BUS_ADDRESS|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|XAUTHORITY|XDG_DATA_DIRS|XDG_CONFIG_DIRS)=')
-    fi
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$EUID}"
     export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
 
-    if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" || ( -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ) ]]; then
-        target_pids=$(pgrep -u "$EUID" -x "niri|sway|hyprland|wayfire|river|kwin_wayland|gnome-shell|mako|dunst|swaync|fnott|waybar" 2>/dev/null || true)
+    if command -v systemctl >/dev/null 2>&1; then
+        while IFS='=' read -r key val; do
+            if [[ -n "$val" && -z "${!key:-}" ]]; then
+                export "$key=$val"
+            fi
+        done < <(systemctl --user show-environment 2>/dev/null | grep -E '^(DISPLAY|WAYLAND_DISPLAY|XDG_RUNTIME_DIR|DBUS_SESSION_BUS_ADDRESS|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|XAUTHORITY|XDG_DATA_DIRS|XDG_CONFIG_DIRS)=')
+    fi
+
+    detect_display_session
+
+    if [[ -z "${DETECTED_WAYLAND:-}" && -z "${DETECTED_DISPLAY:-}" ]]; then
+        target_pids=$(pgrep -i -u "$EUID" -x "niri|sway|hyprland|wayfire|river|kwin_wayland|gnome-shell|labwc|dwl|mako|dunst|swaync|fnott|waybar" 2>/dev/null | sort -rn || true)
         all_pids=$(pgrep -u "$EUID" 2>/dev/null | sort -rn || true)
-        
+        seen_pids=""
+        fallback_dbus=""
+        fallback_data=""
+        fallback_config=""
+
         for pid in $target_pids $all_pids; do
+            [[ -z "$pid" || " $seen_pids " == *" $pid "* ]] && continue
+            seen_pids="$seen_pids $pid"
+
             if [[ -r "/proc/$pid/environ" ]]; then
                 p_disp=""
                 p_wayland=""
@@ -1373,6 +1349,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
                 p_dbus=""
                 p_data=""
                 p_config=""
+
                 while IFS='=' read -r -d '' env_key env_val; do
                     case "$env_key" in
                         DISPLAY) p_disp="$env_val" ;;
@@ -1386,26 +1363,37 @@ if [[ "$DAEMON_MODE" == true ]]; then
                     esac
                 done < <(cat "/proc/$pid/environ" 2>/dev/null)
 
-                if [[ -n "$p_disp" || -n "$p_wayland" || -n "$p_dbus" ]]; then
-                    [[ -z "${DISPLAY:-}" && -n "$p_disp" ]] && export DISPLAY="$p_disp"
-                    [[ -z "${WAYLAND_DISPLAY:-}" && -n "$p_wayland" ]] && export WAYLAND_DISPLAY="$p_wayland"
-                    [[ -z "${XAUTHORITY:-}" && -n "$p_xauth" ]] && export XAUTHORITY="$p_xauth"
-                    [[ -z "${XDG_CURRENT_DESKTOP:-}" && -n "$p_desktop" ]] && export XDG_CURRENT_DESKTOP="$p_desktop"
-                    [[ -z "${XDG_SESSION_TYPE:-}" && -n "$p_session_type" ]] && export XDG_SESSION_TYPE="$p_session_type"
-                    [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -n "$p_dbus" ]] && export DBUS_SESSION_BUS_ADDRESS="$p_dbus"
-                    [[ -z "${XDG_DATA_DIRS:-}" && -n "$p_data" ]] && export XDG_DATA_DIRS="$p_data"
-                    [[ -z "${XDG_CONFIG_DIRS:-}" && -n "$p_config" ]] && export XDG_CONFIG_DIRS="$p_config"
+                if [[ -n "$p_wayland" || -n "$p_disp" ]]; then
+                    [[ -n "$p_dbus" ]] && export DBUS_SESSION_BUS_ADDRESS="$p_dbus"
+                    [[ -n "$p_data" ]] && export XDG_DATA_DIRS="$p_data"
+                    [[ -n "$p_config" ]] && export XDG_CONFIG_DIRS="$p_config"
+                    [[ -n "$p_disp" ]] && export DISPLAY="$p_disp"
+                    [[ -n "$p_wayland" ]] && export WAYLAND_DISPLAY="$p_wayland"
+                    [[ -n "$p_xauth" ]] && export XAUTHORITY="$p_xauth"
+                    [[ -n "$p_desktop" ]] && export XDG_CURRENT_DESKTOP="$p_desktop"
+                    [[ -n "$p_session_type" ]] && export XDG_SESSION_TYPE="$p_session_type"
                     break
+                elif [[ -z "$fallback_dbus" && -n "$p_dbus" ]]; then
+                    fallback_dbus="$p_dbus"
+                    fallback_data="$p_data"
+                    fallback_config="$p_config"
                 fi
             fi
         done
+
+        if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" && -n "$fallback_dbus" ]]; then
+            export DBUS_SESSION_BUS_ADDRESS="$fallback_dbus"
+            [[ -n "$fallback_data" ]] && export XDG_DATA_DIRS="$fallback_data"
+            [[ -n "$fallback_config" ]] && export XDG_CONFIG_DIRS="$fallback_config"
+        fi
+
+        detect_display_session
     fi
 
     if [[ -z "${XAUTHORITY:-}" && -f "${USER_HOME:-}/.Xauthority" ]]; then
         export XAUTHORITY="${USER_HOME}/.Xauthority"
     fi
 
-    detect_display_session
     if [[ -n "${DETECTED_WAYLAND:-}" ]]; then
         export WAYLAND_DISPLAY="$DETECTED_WAYLAND"
     else
@@ -1415,11 +1403,6 @@ if [[ "$DAEMON_MODE" == true ]]; then
         export DISPLAY="$DETECTED_DISPLAY"
     else
         unset DISPLAY
-    fi
-    if [[ -n "${DETECTED_WAYLAND:-}" && -z "${XDG_SESSION_TYPE:-}" ]]; then
-        export XDG_SESSION_TYPE="wayland"
-    elif [[ -n "${DETECTED_DISPLAY:-}" && -z "${XDG_SESSION_TYPE:-}" ]]; then
-        export XDG_SESSION_TYPE="x11"
     fi
 
     if [[ "${SETTINGS_VALIDATION_FAILED:-false}" == "true" ]]; then
@@ -1435,14 +1418,14 @@ if [[ "$DAEMON_MODE" == true ]]; then
     NEXT_CHECK_FILE="$CONFIG_DIR/next_check.conf"
     if [[ "${1:-}" == "--daemon" ]] && [[ -f "$NEXT_CHECK_FILE" ]]; then
         lock_file="$CONFIG_DIR/.state.lock"
-        lock_fd=""
-        if touch "$lock_file" 2>/dev/null && exec {lock_fd}<"$lock_file" 2>/dev/null; then
-            flock -s "$lock_fd"
-        fi
         NEXT_TS=0
-        NEXT_TS=$(cat "$NEXT_CHECK_FILE" 2>/dev/null || echo 0)
-        if [[ -n "${lock_fd:-}" ]]; then
-            exec {lock_fd}<&-
+        if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+            if flock -w 5 -s 200 2>/dev/null; then
+                NEXT_TS=$(cat "$NEXT_CHECK_FILE" 2>/dev/null || echo 0)
+            fi
+            exec 200>&- 2>/dev/null || true
+        else
+            NEXT_TS=$(cat "$NEXT_CHECK_FILE" 2>/dev/null || echo 0)
         fi
         NOW_TS=$(date +%s)
         if [[ "$NEXT_TS" =~ ^[0-9]+$ ]] && (( NEXT_TS > NOW_TS + 300 )); then
@@ -1708,126 +1691,84 @@ EOF
                 touch "$BOOT_SESSION_FILE" 2>/dev/null
 
                 if [[ "$should_notify" == "true" ]]; then
+                    echo "$news_ts" > "$NEWS_CACHE"
                     if command -v notify-send >/dev/null 2>&1; then
                         local notif_icon="dialog-warning"
                         [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
 
-                        if notify-send --help 2>&1 | grep -q -- "--action"; then
-                            local TMP_NEWS
-                            TMP_NEWS=$(mktemp --suffix=.sh "${XDG_RUNTIME_DIR:-/tmp}/asu_news.XXXXXX")
-                            local news_notif_icon="dialog-warning"
-                            [[ -f "$ICON_PATH" ]] && news_notif_icon="$ICON_PATH"
-                            local esc_disp esc_wayland esc_xauth esc_dbus esc_run esc_desk esc_sess esc_cache
-                            esc_disp=$(printf '%q' "${DETECTED_DISPLAY:-${DISPLAY:-}}")
-                            esc_wayland=$(printf '%q' "${DETECTED_WAYLAND:-${WAYLAND_DISPLAY:-}}")
-                            esc_xauth=$(printf '%q' "${XAUTHORITY:-}")
-                            esc_dbus=$(printf '%q' "${DBUS_SESSION_BUS_ADDRESS:-}")
-                            esc_run=$(printf '%q' "${XDG_RUNTIME_DIR:-}")
-                            esc_desk=$(printf '%q' "${XDG_CURRENT_DESKTOP:-}")
-                            esc_sess=$(printf '%q' "${XDG_SESSION_TYPE:-}")
-                            esc_cache=$(printf '%q' "$NEWS_CACHE")
-                            cat <<EOF > "$TMP_NEWS"
-#!/bin/bash
-trap 'rm -f "\$0"' EXIT
-if [[ -n ${esc_disp} ]]; then export DISPLAY=${esc_disp}; else unset DISPLAY; fi
-if [[ -n ${esc_wayland} ]]; then export WAYLAND_DISPLAY=${esc_wayland}; else unset WAYLAND_DISPLAY; fi
-if [[ -n ${esc_xauth} ]]; then export XAUTHORITY=${esc_xauth}; fi
-if [[ -n ${esc_dbus} ]]; then export DBUS_SESSION_BUS_ADDRESS=${esc_dbus}; fi
-if [[ -n ${esc_run} ]]; then export XDG_RUNTIME_DIR=${esc_run}; fi
-if [[ -n ${esc_desk} ]]; then export XDG_CURRENT_DESKTOP=${esc_desk}; fi
-if [[ -n ${esc_sess} ]]; then export XDG_SESSION_TYPE=${esc_sess}; fi
-export NEWS_CACHE=${esc_cache}
-export XDG_DATA_DIRS="\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-export XDG_CONFIG_DIRS="\${XDG_CONFIG_DIRS:-/etc/xdg}"
-export PATH="\$PATH:/usr/local/bin:/usr/bin:/bin"
+                        (
+                            notif_daemon=$(dbus-send --session --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation 2>/dev/null | awk -F'"' '/string/ {print $2; exit}')
+                            notif_daemon=${notif_daemon,,}
+                            desktop_env="${XDG_CURRENT_DESKTOP:-}"
+                            desktop_env="${desktop_env,,}"
 
-notif_daemon=\$(dbus-send --session --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation 2>/dev/null | awk -F'"' '/string/ {print \$2; exit}')
-notif_daemon=\${notif_daemon,,}
-desktop_env=\${XDG_CURRENT_DESKTOP,,}
+                            supports_actions=false
+                            if notify-send --help 2>&1 | grep -q -- "--action"; then
+                                supports_actions=true
+                            fi
 
-use_single_action=false
-if [[ "\$notif_daemon" =~ (mako|dunst|lxqt|xfce|fnott|wired) ]] || [[ "\$desktop_env" =~ (sway|i3|hyprland|niri|lxqt|xfce|wlroots) ]]; then
-    use_single_action=true
-fi
+                            use_single_action=false
+                            if [[ "$notif_daemon" =~ (mako|dunst|lxqt|xfce|fnott|wired) ]] || [[ "$desktop_env" =~ (sway|i3|hyprland|niri|lxqt|xfce|wlroots) ]]; then
+                                use_single_action=true
+                            fi
 
-notif_icon="${news_notif_icon}"
+                            action=""
+                            if [[ "$supports_actions" == "true" ]]; then
+                                if [[ "$use_single_action" == "true" ]]; then
+                                    action=$(notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
+                                else
+                                    action=$(notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="read=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
+                                fi
+                            else
+                                notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." >/dev/null 2>&1 || true
+                            fi
 
-if [[ "\$use_single_action" == "true" ]]; then
-    action=\$(notify-send -a "Arch Smart Update" -u critical -i "\$notif_icon" --action="default=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating.")
-else
-    action=\$(notify-send -a "Arch Smart Update" -u critical -i "\$notif_icon" --action="default=Read News" --action="read=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating.")
-fi
+                            action_clean=$(echo "$action" | tr -d ' \n\r')
 
-action_clean=\$(echo "\$action" | tr -d ' \n\r')
+                            if [[ "$action_clean" == "silence" || ( "$use_single_action" == "true" && "$action_clean" == "1" ) || ( "$use_single_action" == "false" && "$action_clean" == "2" ) ]]; then
+                                echo "${news_ts}|silenced" > "$NEWS_CACHE"
+                            elif [[ "$action_clean" == "read" || "$action_clean" == "default" || "$action_clean" == "0" || ( "$use_single_action" == "false" && "$action_clean" == "1" ) ]]; then
+                                echo "${news_ts}|silenced" > "$NEWS_CACHE"
 
-if [[ "\$action_clean" == "silence" || ( "\$use_single_action" == "true" && "\$action_clean" == "1" ) || ( "\$use_single_action" == "false" && "\$action_clean" == "2" ) ]]; then
-    echo "${news_ts}|silenced" > "\$NEWS_CACHE"
-elif [[ "\$action_clean" == "read" || "\$action_clean" == "default" || "\$action_clean" == "0" || ( "\$use_single_action" == "false" && "\$action_clean" == "1" ) ]]; then
-    echo "${news_ts}|silenced" > "\$NEWS_CACHE"
+                                open_url() {
+                                    local url="$1"
 
-    open_url() {
-        local url="\$1"
+                                    run_cmd() {
+                                        local cmd="$1"
+                                        local arg="$2"
+                                        if command -v setsid >/dev/null 2>&1; then
+                                            setsid -f "$cmd" "$arg" </dev/null >/dev/null 2>&1
+                                        else
+                                            nohup "$cmd" "$arg" </dev/null >/dev/null 2>&1 &
+                                            disown 2>/dev/null || true
+                                        fi
+                                    }
 
-        run_cmd() {
-            local cmd="\$1"
-            local arg="\$2"
-            if [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
-                local env_args=()
-                [[ -n "\$DISPLAY" ]] && env_args+=("-E" "DISPLAY=\$DISPLAY")
-                [[ -n "\$WAYLAND_DISPLAY" ]] && env_args+=("-E" "WAYLAND_DISPLAY=\$WAYLAND_DISPLAY")
-                [[ -n "\$XAUTHORITY" ]] && env_args+=("-E" "XAUTHORITY=\$XAUTHORITY")
-                [[ -n "\$XDG_RUNTIME_DIR" ]] && env_args+=("-E" "XDG_RUNTIME_DIR=\$XDG_RUNTIME_DIR")
-                [[ -n "\$DBUS_SESSION_BUS_ADDRESS" ]] && env_args+=("-E" "DBUS_SESSION_BUS_ADDRESS=\$DBUS_SESSION_BUS_ADDRESS")
-                [[ -n "\$XDG_CURRENT_DESKTOP" ]] && env_args+=("-E" "XDG_CURRENT_DESKTOP=\$XDG_CURRENT_DESKTOP")
-                [[ -n "\$XDG_SESSION_TYPE" ]] && env_args+=("-E" "XDG_SESSION_TYPE=\$XDG_SESSION_TYPE")
-                [[ -n "\$XDG_DATA_DIRS" ]] && env_args+=("-E" "XDG_DATA_DIRS=\$XDG_DATA_DIRS")
-                [[ -n "\$XDG_CONFIG_DIRS" ]] && env_args+=("-E" "XDG_CONFIG_DIRS=\$XDG_CONFIG_DIRS")
-                [[ -n "\$PATH" ]] && env_args+=("-E" "PATH=\$PATH")
-                systemd-run --user --quiet --collect "\${env_args[@]}" -- "\$cmd" "\$arg" >/dev/null 2>&1 && return
-            fi
-            if command -v setsid >/dev/null 2>&1; then
-                setsid -f "\$cmd" "\$arg" </dev/null >/dev/null 2>&1
-            else
-                nohup "\$cmd" "\$arg" </dev/null >/dev/null 2>&1 &
-                disown 2>/dev/null || true
-            fi
-        }
+                                    local default_browser=""
+                                    if command -v xdg-settings >/dev/null 2>&1; then
+                                        default_browser=$(xdg-settings get default-web-browser 2>/dev/null)
+                                        default_browser="${default_browser%.desktop}"
+                                    fi
+                                    if [[ -n "$default_browser" ]] && command -v "$default_browser" >/dev/null 2>&1; then
+                                        run_cmd "$default_browser" "$url"
+                                        return 0
+                                    fi
+                                    if command -v xdg-open >/dev/null 2>&1; then
+                                        run_cmd "xdg-open" "$url"
+                                        return 0
+                                    fi
+                                    for browser in "firefox" "chromium" "google-chrome-stable" "librewolf" "brave" "waterfox" "opera" "epiphany" "falkon"; do
+                                        if command -v "$browser" >/dev/null 2>&1; then
+                                            run_cmd "$browser" "$url"
+                                            return 0
+                                        fi
+                                    done
+                                }
 
-        local default_browser=""
-        if command -v xdg-settings >/dev/null 2>&1; then
-            default_browser=\$(xdg-settings get default-web-browser 2>/dev/null)
-            default_browser="\${default_browser%.desktop}"
-        fi
-        if [[ -n "\$default_browser" ]] && command -v "\$default_browser" >/dev/null 2>&1; then
-            run_cmd "\$default_browser" "\$url"
-            return 0
-        fi
-        if command -v xdg-open >/dev/null 2>&1; then
-            run_cmd "xdg-open" "\$url"
-            return 0
-        fi
-        for browser in "firefox" "chromium" "google-chrome-stable" "librewolf" "brave" "waterfox" "opera" "epiphany" "falkon"; do
-            if command -v "\$browser" >/dev/null 2>&1; then
-                run_cmd "\$browser" "\$url"
-                return 0
-            fi
-        done
-    }
-
-    open_url "https://archlinux.org/"
-    sleep 0.5
-fi
-EOF
-                            chmod +x "$TMP_NEWS"
-                            echo "$news_ts" > "$NEWS_CACHE"
-                            launch_detached "$TMP_NEWS"
-                        else
-                            echo "$news_ts" > "$NEWS_CACHE"
-                            launch_detached notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" \
-                                "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating."
-                        fi
-                    else
-                        echo "$news_ts" > "$NEWS_CACHE"
+                                open_url "https://archlinux.org/"
+                            fi
+                        ) &
+                        disown 2>/dev/null || true
                     fi
                 fi
             fi
@@ -2147,30 +2088,28 @@ refresh_mirrors() {
 handle_daemon_sync_fail() {
     if [[ "$DAEMON_MODE" == true ]]; then
         local lock_file="$CONFIG_DIR/.state.lock"
-        local lock_fd=""
-        if touch "$lock_file" 2>/dev/null && exec {lock_fd}<"$lock_file" 2>/dev/null; then
-            flock -x "$lock_fd"
-        fi
-        local count_file="$CONFIG_DIR/sync_failures.count"
-        local count=0
-        if [[ -f "$count_file" ]]; then
-            count=$(cat "$count_file" 2>/dev/null || echo 0)
-        fi
-        if [[ ! "$count" =~ ^[0-9]+$ ]]; then
-            count=0
-        fi
-        count=$((count + 1))
-        echo "$count" > "$count_file"
-        if (( count > 0 && count % 3 == 0 )); then
-            if command -v notify-send >/dev/null 2>&1; then
-                local notif_icon="dialog-error"
-                [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
-                launch_detached notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" \
-                    "Connection Warning" "Failed to connect to mirrors 3 times consecutively."
+        if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+            if flock -w 5 -x 200 2>/dev/null; then
+                local count_file="$CONFIG_DIR/sync_failures.count"
+                local count=0
+                if [[ -f "$count_file" ]]; then
+                    count=$(cat "$count_file" 2>/dev/null || echo 0)
+                fi
+                if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+                    count=0
+                fi
+                count=$((count + 1))
+                echo "$count" > "$count_file"
+                if (( count > 0 && count % 3 == 0 )); then
+                    if command -v notify-send >/dev/null 2>&1; then
+                        local notif_icon="dialog-error"
+                        [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
+                        launch_detached notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" \
+                            "Connection Warning" "Failed to connect to mirrors 3 times consecutively."
+                    fi
+                fi
             fi
-        fi
-        if [[ -n "${lock_fd:-}" ]]; then
-            exec {lock_fd}<&-
+            exec 200>&- 2>/dev/null || true
         fi
     fi
 }
@@ -2178,13 +2117,11 @@ handle_daemon_sync_fail() {
 handle_daemon_sync_success() {
     if [[ "$DAEMON_MODE" == true ]]; then
         local lock_file="$CONFIG_DIR/.state.lock"
-        local lock_fd=""
-        if touch "$lock_file" 2>/dev/null && exec {lock_fd}<"$lock_file" 2>/dev/null; then
-            flock -x "$lock_fd"
-        fi
-        rm -f "$CONFIG_DIR/sync_failures.count"
-        if [[ -n "${lock_fd:-}" ]]; then
-            exec {lock_fd}<&-
+        if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+            if flock -w 5 -x 200 2>/dev/null; then
+                rm -f "$CONFIG_DIR/sync_failures.count"
+            fi
+            exec 200>&- 2>/dev/null || true
         fi
     fi
 }
@@ -2520,19 +2457,12 @@ if [[ -z "$updates" ]]; then
     fi
 
     lock_file="$CONFIG_DIR/.state.lock"
-    lock_fd=""
-    if touch "$lock_file" 2>/dev/null && exec {lock_fd}<"$lock_file" 2>/dev/null; then
-        flock -x "$lock_fd"
-        rm -f "$CONFIG_DIR/next_check.conf"
-        if [[ "$DAEMON_MODE" == true ]]; then
+    if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+        if flock -w 5 -x 200 2>/dev/null; then
+            rm -f "$CONFIG_DIR/next_check.conf"
             rm -f "$CONFIG_DIR/updates.cache"
         fi
-        exec {lock_fd}<&-
-    else
-        rm -f "$CONFIG_DIR/next_check.conf"
-        if [[ "$DAEMON_MODE" == true ]]; then
-            rm -f "$CONFIG_DIR/updates.cache"
-        fi
+        exec 200>&- 2>/dev/null || true
     fi
 
     sync_daemon_state >/dev/null 2>&1
@@ -3047,17 +2977,9 @@ give_advice() {
 
     printf '%bADVISOR:%b ' "$bold" "$reset"
 
-    local lock_file="$CONFIG_DIR/.state.lock"
-    local lock_fd=""
-    if touch "$lock_file" 2>/dev/null && exec {lock_fd}<"$lock_file" 2>/dev/null; then
-        flock -x "$lock_fd"
-    fi
-
     if (( max_wait_sec == 0 )); then
         echo -e "${green}${bold}GO FOR IT!${reset} ${dim}(Packages have stabilized. Mirrors synced.)${reset}"
         GLOBAL_ADVISOR_SAFE=true
-
-        rm -f "$CONFIG_DIR/next_check.conf"
     else
         local target_time
         target_time=$(date -d "@$(( now + max_wait_sec ))" +%H:%M || echo "00:00")
@@ -3080,13 +3002,19 @@ give_advice() {
         fi
 
         GLOBAL_ADVISOR_SAFE=false
-
-        rm -f "$CONFIG_DIR/next_check.conf"
-        echo "$(( now + max_wait_sec ))" > "$CONFIG_DIR/next_check.conf"
     fi
 
-    if [[ -n "${lock_fd:-}" ]]; then
-        exec {lock_fd}<&-
+    local lock_file="$CONFIG_DIR/.state.lock"
+    if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+        if flock -w 5 -x 200 2>/dev/null; then
+            if [[ "$GLOBAL_ADVISOR_SAFE" == "true" ]]; then
+                rm -f "$CONFIG_DIR/next_check.conf"
+            else
+                rm -f "$CONFIG_DIR/next_check.conf"
+                echo "$(( now + max_wait_sec ))" > "$CONFIG_DIR/next_check.conf"
+            fi
+        fi
+        exec 200>&- 2>/dev/null || true
     fi
 
     sync_daemon_state >/dev/null 2>&1
@@ -3119,195 +3047,141 @@ if [[ "$DAEMON_MODE" == true ]]; then
 
     if [[ "$GLOBAL_ADVISOR_SAFE" == true ]] && (( pkg_count > 0 )) && command -v notify-send >/dev/null 2>&1; then
         lock_file="$CONFIG_DIR/.state.lock"
-        lock_fd=""
-        if touch "$lock_file" 2>/dev/null && exec {lock_fd}<"$lock_file" 2>/dev/null; then
-            flock -x "$lock_fd"
-        fi
         OLD_COUNT=0
         should_notify=false
-        if [[ -f "$CACHE_FILE" ]]; then
-            OLD_COUNT=$(cat "$CACHE_FILE" 2>/dev/null || echo 0)
-        fi
-        [[ ! "$OLD_COUNT" =~ ^[0-9]+$ ]] && OLD_COUNT=0
-        if (( pkg_count != OLD_COUNT )); then
-            rm -f "$CACHE_FILE"
-            echo "$pkg_count" > "$CACHE_FILE"
-            should_notify=true
-        fi
-        if [[ -n "${lock_fd:-}" ]]; then
-            exec {lock_fd}<&-
+        if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+            if flock -w 5 -x 200 2>/dev/null; then
+                if [[ -f "$CACHE_FILE" ]]; then
+                    OLD_COUNT=$(cat "$CACHE_FILE" 2>/dev/null || echo 0)
+                fi
+                [[ ! "$OLD_COUNT" =~ ^[0-9]+$ ]] && OLD_COUNT=0
+                if [[ "${1:-}" == "--check" ]] || (( pkg_count != OLD_COUNT )); then
+                    rm -f "$CACHE_FILE"
+                    echo "$pkg_count" > "$CACHE_FILE"
+                    should_notify=true
+                fi
+            fi
+            exec 200>&- 2>/dev/null || true
         fi
 
         if [[ "$should_notify" == "true" ]]; then
             notif_icon="software-update-available"
             [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
+            target_script="$(realpath "$(command -v "${BASH_SOURCE:-$0}" 2>/dev/null || echo "${BASH_SOURCE:-$0}")")"
 
-            if notify-send --help 2>&1 | grep -q -- "--action"; then
-                TMP_NOTIFY=$(mktemp --suffix=.sh "${XDG_RUNTIME_DIR:-/tmp}/asu_update.XXXXXX")
-                terminal_esc=$(printf '%q' "${TERMINAL:-}")
-                config_dir_esc=$(printf '%q' "${CONFIG_DIR}")
-                silence_updates_esc=$(printf '%q' "${SILENCE_UPDATES}")
-                script_bin_esc=$(printf '%q' "${SCRIPT_BIN:-$(realpath "$(command -v "${BASH_SOURCE:-$0}" 2>/dev/null || echo "${BASH_SOURCE:-$0}")")}")
-                main_notif_icon="software-update-available"
-                [[ -f "$ICON_PATH" ]] && main_notif_icon="$ICON_PATH"
-                esc_disp=$(printf '%q' "${DETECTED_DISPLAY:-${DISPLAY:-}}")
-                esc_wayland=$(printf '%q' "${DETECTED_WAYLAND:-${WAYLAND_DISPLAY:-}}")
-                esc_xauth=$(printf '%q' "${XAUTHORITY:-}")
-                esc_dbus=$(printf '%q' "${DBUS_SESSION_BUS_ADDRESS:-}")
-                esc_run=$(printf '%q' "${XDG_RUNTIME_DIR:-}")
-                esc_desk=$(printf '%q' "${XDG_CURRENT_DESKTOP:-}")
-                esc_sess=$(printf '%q' "${XDG_SESSION_TYPE:-}")
-                cat <<EOF > "$TMP_NOTIFY"
-#!/bin/bash
-trap 'rm -f "\$0"' EXIT
-if [[ -n ${terminal_esc} ]]; then export TERMINAL=${terminal_esc}; fi
-export SCRIPT_BIN=${script_bin_esc}
-if [[ -n ${esc_disp} ]]; then export DISPLAY=${esc_disp}; else unset DISPLAY; fi
-if [[ -n ${esc_wayland} ]]; then export WAYLAND_DISPLAY=${esc_wayland}; else unset WAYLAND_DISPLAY; fi
-if [[ -n ${esc_xauth} ]]; then export XAUTHORITY=${esc_xauth}; fi
-if [[ -n ${esc_dbus} ]]; then export DBUS_SESSION_BUS_ADDRESS=${esc_dbus}; fi
-if [[ -n ${esc_run} ]]; then export XDG_RUNTIME_DIR=${esc_run}; fi
-if [[ -n ${esc_desk} ]]; then export XDG_CURRENT_DESKTOP=${esc_desk}; fi
-if [[ -n ${esc_sess} ]]; then export XDG_SESSION_TYPE=${esc_sess}; fi
-export XDG_DATA_DIRS="\${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-export XDG_CONFIG_DIRS="\${XDG_CONFIG_DIRS:-/etc/xdg}"
-export PATH="\$PATH:/usr/local/bin:/usr/bin:/bin"
-export CONFIG_DIR=${config_dir_esc}
-export SILENCE_UPDATES=${silence_updates_esc}
+            (
+                notif_daemon=$(dbus-send --session --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation 2>/dev/null | awk -F'"' '/string/ {print $2; exit}')
+                notif_daemon=${notif_daemon,,}
+                desktop_env="${XDG_CURRENT_DESKTOP:-}"
+                desktop_env="${desktop_env,,}"
 
-notif_daemon=\$(dbus-send --session --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation 2>/dev/null | awk -F'"' '/string/ {print \$2; exit}')
-notif_daemon=\${notif_daemon,,}
-desktop_env=\${XDG_CURRENT_DESKTOP,,}
+                supports_actions=false
+                if notify-send --help 2>&1 | grep -q -- "--action"; then
+                    supports_actions=true
+                fi
 
-use_single_action=false
-if [[ "\$notif_daemon" =~ (mako|dunst|lxqt|xfce|fnott|wired) ]] || [[ "\$desktop_env" =~ (sway|i3|hyprland|niri|lxqt|xfce|wlroots) ]]; then
-    use_single_action=true
-fi
+                use_single_action=false
+                if [[ "$notif_daemon" =~ (mako|dunst|lxqt|xfce|fnott|wired) ]] || [[ "$desktop_env" =~ (sway|i3|hyprland|niri|lxqt|xfce|wlroots) ]]; then
+                    use_single_action=true
+                fi
 
-notif_icon="${main_notif_icon}"
+                action=""
+                if [[ "$supports_actions" == "true" ]]; then
+                    if [[ "$use_single_action" == "true" ]]; then
+                        action=$(notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" --action="default=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
+                    else
+                        action=$(notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" --action="default=Update Now" --action="update=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
+                    fi
+                else
+                    notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." >/dev/null 2>&1 || true
+                fi
 
-if [[ "\$use_single_action" == "true" ]]; then
-    action=\$(notify-send -a "Arch Smart Update" -u normal -i "\$notif_icon" --action="default=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
-else
-    action=\$(notify-send -a "Arch Smart Update" -u normal -i "\$notif_icon" --action="default=Update Now" --action="update=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
-fi
+                action_clean=$(echo "$action" | tr -d ' \n\r')
 
-if [[ -z "\$action" ]]; then
-    notify-send -a "Arch Smart Update" -u normal -i "\$notif_icon" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." >/dev/null 2>&1 || true
-fi
+                if [[ "$action_clean" == "silence" || ( "$use_single_action" == "true" && "$action_clean" == "1" ) || ( "$use_single_action" == "false" && "$action_clean" == "2" ) ]]; then
+                    silence_sec=21600
+                    if [[ "$SILENCE_UPDATES" =~ ^([0-9]+)$ ]]; then
+                        silence_sec=$(( BASH_REMATCH[1] * 3600 ))
+                    elif [[ "$SILENCE_UPDATES" =~ ^([0-9]+)[[:space:]]*([a-zA-Z]+)$ ]]; then
+                        num="${BASH_REMATCH[1]}"
+                        unit="${BASH_REMATCH[2],,}"
+                        case "$unit" in
+                            s|sec|secs|second|seconds) silence_sec="$num" ;;
+                            m|min|mins|minute|minutes) silence_sec=$(( num * 60 )) ;;
+                            h|hr|hrs|hour|hours) silence_sec=$(( num * 3600 )) ;;
+                            d|day|days) silence_sec=$(( num * 86400 )) ;;
+                            w|wk|wks|week|weeks) silence_sec=$(( num * 604800 )) ;;
+                        esac
+                    fi
+                    silence_ts=$(( $(date +%s) + silence_sec ))
+                    lock_file="${CONFIG_DIR}/.state.lock"
+                    if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+                        if flock -w 5 -x 200 2>/dev/null; then
+                            echo "$silence_ts" > "${CONFIG_DIR}/next_check.conf"
+                        fi
+                        exec 200>&- 2>/dev/null || true
+                    fi
+                    exit 0
+                elif [[ "$action_clean" == "update" || "$action_clean" == "default" || "$action_clean" == "0" || ( "$use_single_action" == "false" && "$action_clean" == "1" ) ]]; then
+                    spawn_term() {
+                        local cmd=("$@")
+                        if command -v setsid >/dev/null 2>&1; then
+                            env ASU_SPAWNED=true setsid -f "${cmd[@]}" </dev/null >/dev/null 2>&1
+                        else
+                            env ASU_SPAWNED=true nohup "${cmd[@]}" </dev/null >/dev/null 2>&1 &
+                            disown 2>/dev/null || true
+                        fi
+                        exit 0
+                    }
 
-action_clean=\$(echo "\$action" | tr -d ' \n\r')
+                    if [[ -n "${TERMINAL:-}" ]]; then
+                        read -ra term_custom <<< "$TERMINAL"
+                        if command -v "${term_custom[0]}" >/dev/null 2>&1; then
+                            if (( ${#term_custom[@]} > 1 )); then
+                                spawn_term "${term_custom[@]}" "$target_script"
+                            elif [[ "${term_custom[0]}" =~ ^(kitty|gnome-terminal)$ ]]; then
+                                spawn_term "${term_custom[0]}" -- "$target_script"
+                            elif [[ "${term_custom[0]}" == "foot" ]]; then
+                                spawn_term "${term_custom[0]}" "$target_script"
+                            elif [[ "${term_custom[0]}" == "wezterm" ]]; then
+                                spawn_term "${term_custom[0]}" start -- "$target_script"
+                            else
+                                spawn_term "${term_custom[0]}" -e "$target_script"
+                            fi
+                        fi
+                    fi
 
-if [[ "\$action_clean" == "silence" || ( "\$use_single_action" == "true" && "\$action_clean" == "1" ) || ( "\$use_single_action" == "false" && "\$action_clean" == "2" ) ]]; then
-    rm -f "\$0"
-    silence_sec=21600
-    if [[ "\$SILENCE_UPDATES" =~ ^([0-9]+)\$ ]]; then
-        silence_sec=\$(( BASH_REMATCH[1] * 3600 ))
-    elif [[ "\$SILENCE_UPDATES" =~ ^([0-9]+)[[:space:]]*([a-zA-Z]+)\$ ]]; then
-        num="\${BASH_REMATCH[1]}"
-        unit="\${BASH_REMATCH[2],,}"
-        case "\$unit" in
-            s|sec|secs|second|seconds) silence_sec="\$num" ;;
-            m|min|mins|minute|minutes) silence_sec=\$(( num * 60 )) ;;
-            h|hr|hrs|hour|hours) silence_sec=\$(( num * 3600 )) ;;
-            d|day|days) silence_sec=\$(( num * 86400 )) ;;
-            w|wk|wks|week|weeks) silence_sec=\$(( num * 604800 )) ;;
-        esac
-    fi
-    silence_ts=\$(( \$(date +%s) + silence_sec ))
-    lock_file="\${CONFIG_DIR}/.state.lock"
-    lock_fd=""
-    if touch "\$lock_file" 2>/dev/null && exec {lock_fd}<"\$lock_file" 2>/dev/null; then
-        flock -x "\$lock_fd"
-    fi
-    echo "\$silence_ts" > "\${CONFIG_DIR}/next_check.conf"
-    if [[ -n "\${lock_fd:-}" ]]; then
-        exec {lock_fd}<&-
-    fi
-    exit 0
-elif [[ "\$action_clean" == "update" || "\$action_clean" == "default" || "\$action_clean" == "0" || ( "\$use_single_action" == "false" && "\$action_clean" == "1" ) ]]; then
-    rm -f "\$0"
-    export ASU_SPAWNED=true
+                    if command -v xdg-terminal-exec >/dev/null 2>&1; then
+                        spawn_term xdg-terminal-exec "$target_script"
+                    fi
 
-    spawn_term() {
-        local cmd=("\$@")
-        if [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
-            local env_args=()
-            [[ -n "\$DISPLAY" ]] && env_args+=("-E" "DISPLAY=\$DISPLAY")
-            [[ -n "\$WAYLAND_DISPLAY" ]] && env_args+=("-E" "WAYLAND_DISPLAY=\$WAYLAND_DISPLAY")
-            [[ -n "\$XAUTHORITY" ]] && env_args+=("-E" "XAUTHORITY=\$XAUTHORITY")
-            [[ -n "\$XDG_RUNTIME_DIR" ]] && env_args+=("-E" "XDG_RUNTIME_DIR=\$XDG_RUNTIME_DIR")
-            [[ -n "\$DBUS_SESSION_BUS_ADDRESS" ]] && env_args+=("-E" "DBUS_SESSION_BUS_ADDRESS=\$DBUS_SESSION_BUS_ADDRESS")
-            [[ -n "\$XDG_CURRENT_DESKTOP" ]] && env_args+=("-E" "XDG_CURRENT_DESKTOP=\$XDG_CURRENT_DESKTOP")
-            [[ -n "\$XDG_SESSION_TYPE" ]] && env_args+=("-E" "XDG_SESSION_TYPE=\$XDG_SESSION_TYPE")
-            [[ -n "\$XDG_DATA_DIRS" ]] && env_args+=("-E" "XDG_DATA_DIRS=\$XDG_DATA_DIRS")
-            [[ -n "\$XDG_CONFIG_DIRS" ]] && env_args+=("-E" "XDG_CONFIG_DIRS=\$XDG_CONFIG_DIRS")
-            [[ -n "\$PATH" ]] && env_args+=("-E" "PATH=\$PATH")
-            [[ -n "\$ASU_SPAWNED" ]] && env_args+=("-E" "ASU_SPAWNED=\$ASU_SPAWNED")
-            systemd-run --user --quiet --collect "\${env_args[@]}" -- "\${cmd[@]}" >/dev/null 2>&1 && exit 0
-        fi
-        if command -v setsid >/dev/null 2>&1; then
-            setsid -f "\${cmd[@]}" </dev/null >/dev/null 2>&1
-        else
-            nohup "\${cmd[@]}" </dev/null >/dev/null 2>&1 &
+                    term_candidates=(
+                        "ghostty -e"
+                        "alacritty -e"
+                        "kitty --"
+                        "konsole -e"
+                        "gnome-terminal --"
+                        "xfce4-terminal --disable-server -x"
+                        "terminator -x"
+                        "tilix -e"
+                        "foot"
+                        "wezterm start --"
+                        "qterminal -e"
+                        "lxterminal -e"
+                        "mate-terminal -x"
+                        "xterm -e"
+                    )
+
+                    for term_entry in "${term_candidates[@]}"; do
+                        read -ra term_arr <<< "$term_entry"
+                        bin="${term_arr[0]}"
+                        if command -v "$bin" >/dev/null 2>&1; then
+                            spawn_term "${term_arr[@]}" "$target_script"
+                        fi
+                    done
+                fi
+            ) &
             disown 2>/dev/null || true
-        fi
-        exit 0
-    }
-
-    if [[ -n "\$TERMINAL" ]]; then
-        read -ra term_custom <<< "\$TERMINAL"
-        if command -v "\${term_custom[0]}" >/dev/null 2>&1; then
-            if (( \${#term_custom[@]} > 1 )); then
-                spawn_term "\${term_custom[@]}" "\$SCRIPT_BIN"
-            elif [[ "\${term_custom[0]}" =~ ^(kitty|gnome-terminal)$ ]]; then
-                spawn_term "\${term_custom[0]}" -- "\$SCRIPT_BIN"
-            elif [[ "\${term_custom[0]}" == "foot" ]]; then
-                spawn_term "\${term_custom[0]}" "\$SCRIPT_BIN"
-            elif [[ "\${term_custom[0]}" == "wezterm" ]]; then
-                spawn_term "\${term_custom[0]}" start -- "\$SCRIPT_BIN"
-            else
-                spawn_term "\${term_custom[0]}" -e "\$SCRIPT_BIN"
-            fi
-        fi
-    fi
-
-    if command -v xdg-terminal-exec >/dev/null 2>&1; then
-        spawn_term xdg-terminal-exec "\$SCRIPT_BIN"
-    fi
-
-    term_candidates=(
-        "ghostty -e"
-        "alacritty -e"
-        "kitty --"
-        "konsole -e"
-        "gnome-terminal --"
-        "xfce4-terminal --disable-server -x"
-        "terminator -x"
-        "tilix -e"
-        "foot"
-        "wezterm start --"
-        "qterminal -e"
-        "lxterminal -e"
-        "mate-terminal -x"
-        "xterm -e"
-    )
-
-    for term_entry in "\${term_candidates[@]}"; do
-        read -ra term_arr <<< "\$term_entry"
-        bin="\${term_arr[0]}"
-        if command -v "\$bin" >/dev/null 2>&1; then
-            spawn_term "\${term_arr[@]}" "\$SCRIPT_BIN"
-        fi
-    done
-fi
-EOF
-                chmod +x "$TMP_NOTIFY"
-                launch_detached "$TMP_NOTIFY"
-            else
-                launch_detached notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" \
-                    "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install."
-            fi
         fi
     fi
     exit 0
@@ -3640,21 +3514,19 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     fi
 
     if $UPDATE_SUCCESS; then
-        lock_file="$CONFIG_DIR/.state.lock"
-        lock_fd=""
-        if touch "$lock_file" 2>/dev/null && exec {lock_fd}<"$lock_file" 2>/dev/null; then
-            flock -x "$lock_fd"
-        fi
         remaining_pkgs=$(check_pending_updates "all" 2>/dev/null || true)
-        if [[ -n "$remaining_pkgs" ]]; then
-            rem_count=$(grep -c . <<< "$remaining_pkgs")
-            echo "$rem_count" > "$CONFIG_DIR/updates.cache"
-        else
-            rm -f "$CONFIG_DIR/updates.cache"
-        fi
-        rm -f "$CONFIG_DIR/next_check.conf"
-        if [[ -n "${lock_fd:-}" ]]; then
-            exec {lock_fd}<&-
+        lock_file="$CONFIG_DIR/.state.lock"
+        if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+            if flock -w 5 -x 200 2>/dev/null; then
+                if [[ -n "$remaining_pkgs" ]]; then
+                    rem_count=$(grep -c . <<< "$remaining_pkgs")
+                    echo "$rem_count" > "$CONFIG_DIR/updates.cache"
+                else
+                    rm -f "$CONFIG_DIR/updates.cache"
+                fi
+                rm -f "$CONFIG_DIR/next_check.conf"
+            fi
+            exec 200>&- 2>/dev/null || true
         fi
 
         if [[ "${ENABLE_BACKGROUND_CHECK,,}" == "true" ]] && command -v systemctl >/dev/null 2>&1; then
