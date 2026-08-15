@@ -43,7 +43,7 @@ The script also supports distribution-specific utilities on **EndeavourOS** (suc
 - **🔒 Intelligent Lock File Removal:** Detects a stale `/var/lib/pacman/db.lck` file and checks if a package manager is actually running. It uses `fuser` if available, or natively extracts the lock PID and scans the process table (`pgrep` / `/proc`) as a fallback to safely remove phantom locks.
 - **🚨 IgnorePkg Conflict Checker:** If you have frozen packages via `pacman.conf`, the script simulates the update in the background and warns you of any dependency breakages caused by skipped packages.
 - **🧹 Automated System Cleanup:** Optional post-update cleanup that safely removes orphaned packages, clears partial downloads, empties the pacman/AUR cache, vacuums the systemd journal (keeping 100M), and clears user thumbnail caches.
-- **🧩 Seamless Ecosystem Integration:** Full, native support for AUR helpers (`yay`, `paru`), as well as synergy with `eos-update` and `topgrade` to handle your Flatpaks, firmware, and dotfiles.
+- **🧩 Seamless Ecosystem Integration:** Full, native support for popular AUR helpers (`yay`, `paru`, `pikaur`, `aura`, `rua`, `trizen`, `pacaur`, `pakku`), an automatic built-in **AUR RPC API v5** client when no helper is installed, and compatibility with `eos-update`, `cachy-update`, and `topgrade` (to handle Flatpaks, firmware, and dotfiles).
 - **👻 Background Daemon & Notifications:** You can allow the script to run in the background using a user systemd timer. It silently checks for updates using `fakeroot` (no sudo required) and sends interactive desktop notifications via `libnotify`. Features boot-session awareness for Arch News to prevent spam and alerts after 3 consecutive mirror connection failures.
 
 ---
@@ -85,16 +85,20 @@ Whenever the master configuration on GitHub is updated, the script will quietly 
 
 ## 📋 Dependencies
 
-The script relies on standard system utilities, but make sure you have the following packages installed:
+The script relies on standard Arch base system utilities:
 
-`sudo pacman -S curl python bash tar gawk coreutils zstd grep sed util-linux`
-
-*(Note: The python package provides python3 for the Arch News RSS check, zstd is required for accelerated local database backups, and util-linux provides the script utility used for interactive terminal emulation).*
+`sudo pacman -S bash python pacman tar gawk coreutils curl zstd grep sed`
 
 **Optional Dependencies:**
-- `base-devel` (specifically `fakeroot`) — Required for the background daemon to sync databases without sudo privileges.
-- `libnotify` — Required for desktop notifications in daemon mode.
-- `psmisc` — Provides the `fuser` utility for standard lock file analysis (though the script features a native fallback if missing).
+- `base-devel` (specifically `fakeroot`) — Required for the background daemon to safely synchronize databases without sudo.
+- `libnotify` — Required for interactive desktop notifications in daemon mode.
+- `util-linux` — Provides `script` for clean terminal log captures, `flock` for daemon concurrency locking, and `setsid` for detached processes.
+- `xdg-utils` / `xdg-terminal-exec` — For opening Arch News links in your default browser (`xdg-open`) and launching the default terminal emulator from notifications.
+- `flatpak` — Enables automated removal of unused Flatpak runtimes during post-update cleanup.
+- `gamemode` — Automatically postpones background update checks while gaming.
+- `snap-pac` — Triggers automated pre/post Btrfs snapshots on update (if using Snapper).
+- `reflector` / `eos-rankmirrors` / `cachyos-rate-mirrors` — For automated mirror ranking and refresh prompts.
+- `yay` / `paru` / `pikaur` / `aura` / `rua` / `trizen` / `pacaur` / `pakku` — For managing foreign AUR packages.
 
 <a name="installation"></a>
 ## 🛠️ Installation
