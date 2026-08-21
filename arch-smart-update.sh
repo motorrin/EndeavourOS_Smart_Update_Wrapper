@@ -170,6 +170,7 @@ launch_detached() {
     [[ -n "${XDG_CONFIG_DIRS:-}" ]] && env_wrapper+=("XDG_CONFIG_DIRS=$XDG_CONFIG_DIRS")
     [[ -n "${XDG_CURRENT_DESKTOP:-}" ]] && env_wrapper+=("XDG_CURRENT_DESKTOP=$XDG_CURRENT_DESKTOP")
     [[ -n "${XDG_SESSION_TYPE:-}" ]] && env_wrapper+=("XDG_SESSION_TYPE=$XDG_SESSION_TYPE")
+    [[ -n "${ASU_SPAWNED:-}" ]] && env_wrapper+=("ASU_SPAWNED=$ASU_SPAWNED")
 
     local runner=()
     [[ "${1:-}" == *.sh ]] && runner=(/bin/bash)
@@ -3123,14 +3124,10 @@ if [[ "$DAEMON_MODE" == true ]]; then
                     fi
                     exit 0
                 elif [[ "$action_clean" == "update" || "$action_clean" == "default" || "$action_clean" == "0" || ( "$use_single_action" == "false" && "$action_clean" == "1" ) ]]; then
+                    sleep 0.15
+
                     spawn_term() {
-                        local cmd=("$@")
-                        if command -v setsid >/dev/null 2>&1; then
-                            env ASU_SPAWNED=true setsid -f "${cmd[@]}" </dev/null >/dev/null 2>&1
-                        else
-                            env ASU_SPAWNED=true nohup "${cmd[@]}" </dev/null >/dev/null 2>&1 &
-                            disown 2>/dev/null || true
-                        fi
+                        ASU_SPAWNED=true launch_detached "$@"
                         exit 0
                     }
 
