@@ -6,12 +6,11 @@
 
 [Unit]
 Description=Arch Smart Update Background Checker
-After=graphical-session.target
+After=graphical-session.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-Environment="DISPLAY=:0"
-Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"
 ExecStart=__SCRIPT_PATH__ --daemon
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
@@ -23,6 +22,7 @@ Description=Check for Arch updates every __CHECK_INTERVAL__
 [Timer]
 OnActiveSec=__START_DELAY__
 OnUnitActiveSec=__CHECK_INTERVAL__
+Persistent=true
 
 [Install]
 WantedBy=timers.target
