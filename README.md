@@ -171,22 +171,21 @@ Manual *(if you downloaded it to a different folder, change the path accordingly
 `rm ~/arch-smart-update.sh`
 
 ### 3. Remove the configuration directory:
-
 `rm -rf ~/.config/arch-smart-update`
 
 ### 4. Remove generated systemd files:
-
 `rm -f ~/.config/systemd/user/arch-smart-update.service`  
+
 `rm -f ~/.config/systemd/user/arch-smart-update.timer`  
+
 `systemctl --user daemon-reload`
 
 ### 5. Delete Pacman database backups:
-
 `sudo rm -f /var/lib/pacman/backup/pacman_database_*.tar.zst`
+
 `sudo rm -f /var/lib/pacman/backup/pacman_database_*.tar.gz`
 
 ### 6. Clear AUR helper build cache (if installed via AUR):
-
 `rm -rf ~/.cache/yay/arch-smart-update`
 
 `rm -rf ~/.cache/paru/clone/arch-smart-update`
