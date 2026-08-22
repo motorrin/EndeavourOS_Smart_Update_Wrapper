@@ -44,7 +44,7 @@ exec {ASU_TTY_OUT}>&1 {ASU_TTY_ERR}>&2
 
 DAEMON_MODE=false
 ASU_SPAWNED="${ASU_SPAWNED:-false}"
-if [[ "${1:-}" == "--daemon" || "${1:-}" == "--check" ]]; then
+if [[ "${1:-}" == "--daemon" || "${1:-}" == "--check" || "${1:-}" == "--notify-worker" || "${1:-}" == "--news-worker" ]]; then
     DAEMON_MODE=true
 fi
 
@@ -175,15 +175,211 @@ launch_detached() {
     local runner=()
     [[ "${1:-}" == *.sh ]] && runner=(/bin/bash)
 
-    if command -v setsid >/dev/null 2>&1; then
-        "${env_wrapper[@]}" setsid -f ${runner[@]+"${runner[@]}"} "$@" </dev/null >/dev/null 2>&1
-    elif [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
+    if [[ -d /run/systemd/system ]] && command -v systemd-run >/dev/null 2>&1; then
         systemd-run --user --quiet --collect -- "${env_wrapper[@]}" ${runner[@]+"${runner[@]}"} "$@" >/dev/null 2>&1
+    elif command -v setsid >/dev/null 2>&1; then
+        "${env_wrapper[@]}" setsid -f ${runner[@]+"${runner[@]}"} "$@" </dev/null >/dev/null 2>&1
     else
         "${env_wrapper[@]}" nohup ${runner[@]+"${runner[@]}"} "$@" </dev/null >/dev/null 2>&1 &
         disown 2>/dev/null || true
     fi
 }
+
+handle_news_worker() {
+    local notif_icon="${2:-dialog-warning}"
+    local diff_hours="${3:-0}"
+    local news_ts="${4:-0}"
+    local news_cache="$CONFIG_DIR/news.cache"
+
+    local notif_daemon desktop_env supports_actions=false use_single_action=false action="" action_clean=""
+    notif_daemon=$(dbus-send --session --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation 2>/dev/null | awk -F'"' '/string/ {print $2; exit}')
+    notif_daemon=${notif_daemon,,}
+    desktop_env="${XDG_CURRENT_DESKTOP:-}"
+    desktop_env="${desktop_env,,}"
+
+    if notify-send --help 2>&1 | grep -q -- "--action"; then
+        supports_actions=true
+    fi
+
+    if [[ "$notif_daemon" =~ (mako|dunst|lxqt|xfce|fnott|wired|swaync) ]] || [[ "$desktop_env" =~ (sway|i3|hyprland|niri|lxqt|xfce|wlroots) ]]; then
+        use_single_action=true
+    fi
+
+    if [[ "$supports_actions" == "true" ]]; then
+        if [[ "$use_single_action" == "true" ]]; then
+            action=$(notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
+        else
+            action=$(notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="read=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
+        fi
+    else
+        notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." >/dev/null 2>&1 || true
+    fi
+
+    action_clean=$(echo "$action" | tr -d ' \n\r')
+
+    if [[ "$action_clean" == "silence" || ( "$use_single_action" == "true" && "$action_clean" == "1" ) || ( "$use_single_action" == "false" && "$action_clean" == "2" ) ]]; then
+        echo "${news_ts}|silenced" > "$news_cache"
+    elif [[ "$action_clean" == "read" || "$action_clean" == "default" || "$action_clean" == "0" || ( "$use_single_action" == "false" && "$action_clean" == "1" ) ]]; then
+        echo "${news_ts}|silenced" > "$news_cache"
+        open_url() {
+            local url="$1"
+            local default_browser=""
+            if command -v xdg-settings >/dev/null 2>&1; then
+                default_browser=$(xdg-settings get default-web-browser 2>/dev/null)
+                default_browser="${default_browser%.desktop}"
+            fi
+            if [[ -n "$default_browser" ]] && command -v "$default_browser" >/dev/null 2>&1; then
+                exec "$default_browser" "$url"
+            fi
+            if command -v xdg-open >/dev/null 2>&1; then
+                exec xdg-open "$url"
+            fi
+            for browser in "firefox" "chromium" "google-chrome-stable" "librewolf" "brave" "waterfox" "opera" "epiphany" "falkon"; do
+                if command -v "$browser" >/dev/null 2>&1; then
+                    exec "$browser" "$url"
+                fi
+            done
+        }
+        open_url "https://archlinux.org/"
+    fi
+}
+
+handle_notify_worker() {
+    local notif_icon="${2:-software-update-available}"
+    local pkg_count="${3:-0}"
+    local aur_count="${4:-0}"
+    local target_script
+    target_script="$(realpath "$(command -v "${BASH_SOURCE:-$0}" 2>/dev/null || echo "${BASH_SOURCE:-$0}")")"
+
+    local silence_cfg="6h"
+    if [[ -f "$CONFIG_DIR/settings.conf" ]]; then
+        local raw_silence
+        raw_silence=$(awk -F'=' '/^[[:space:]]*SILENCE_UPDATES[[:space:]]*=/ {gsub(/["\047]/, "", $2); sub(/[[:space:]]#.*$/, "", $2); gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' "$CONFIG_DIR/settings.conf" 2>/dev/null || true)
+        [[ -n "$raw_silence" ]] && silence_cfg="$raw_silence"
+    fi
+
+    local notif_daemon desktop_env supports_actions=false use_single_action=false action="" action_clean=""
+    notif_daemon=$(dbus-send --session --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation 2>/dev/null | awk -F'"' '/string/ {print $2; exit}')
+    notif_daemon=${notif_daemon,,}
+    desktop_env="${XDG_CURRENT_DESKTOP:-}"
+    desktop_env="${desktop_env,,}"
+
+    if notify-send --help 2>&1 | grep -q -- "--action"; then
+        supports_actions=true
+    fi
+
+    if [[ "$notif_daemon" =~ (mako|dunst|lxqt|xfce|fnott|wired|swaync) ]] || [[ "$desktop_env" =~ (sway|i3|hyprland|niri|lxqt|xfce|wlroots) ]]; then
+        use_single_action=true
+    fi
+
+    if [[ "$supports_actions" == "true" ]]; then
+        if [[ "$use_single_action" == "true" ]]; then
+            action=$(notify-send -t 0 -a "Arch Smart Update" -u normal -i "$notif_icon" \
+                --action="default=Update Now" \
+                --action="silence=Silence" \
+                "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
+        else
+            action=$(notify-send -t 0 -a "Arch Smart Update" -u normal -i "$notif_icon" \
+                --action="default=Update Now" \
+                --action="update=Update Now" \
+                --action="silence=Silence" \
+                "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
+        fi
+    else
+        notify-send -t 0 -a "Arch Smart Update" -u normal -i "$notif_icon" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." >/dev/null 2>&1 || true
+    fi
+
+    action_clean=$(echo "$action" | tr -d ' \n\r')
+
+    if [[ "$action_clean" == "silence" || ( "$use_single_action" == "true" && "$action_clean" == "1" ) || ( "$use_single_action" == "false" && "$action_clean" == "2" ) ]]; then
+        local silence_sec=21600
+        if [[ "$silence_cfg" =~ ^([0-9]+)$ ]]; then
+            silence_sec=$(( BASH_REMATCH[1] * 3600 ))
+        elif [[ "$silence_cfg" =~ ^([0-9]+)[[:space:]]*([a-zA-Z]+)$ ]]; then
+            local num="${BASH_REMATCH[1]}"
+            local unit="${BASH_REMATCH[2],,}"
+            case "$unit" in
+                s|sec|secs|second|seconds) silence_sec="$num" ;;
+                m|min|mins|minute|minutes) silence_sec=$(( num * 60 )) ;;
+                h|hr|hrs|hour|hours) silence_sec=$(( num * 3600 )) ;;
+                d|day|days) silence_sec=$(( num * 86400 )) ;;
+                w|wk|wks|week|weeks) silence_sec=$(( num * 604800 )) ;;
+            esac
+        fi
+        local silence_ts=$(( $(date +%s) + silence_sec ))
+        local lock_file="${CONFIG_DIR}/.state.lock"
+        if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
+            if flock -w 5 -x 200 2>/dev/null; then
+                echo "$silence_ts" > "${CONFIG_DIR}/next_check.conf"
+            fi
+            exec 200>&- 2>/dev/null || true
+        fi
+        exit 0
+    elif [[ "$action_clean" == "update" || "$action_clean" == "default" || "$action_clean" == "0" || ( "$use_single_action" == "false" && "$action_clean" == "1" ) ]]; then
+        sleep 0.15
+
+        spawn_term() {
+            export ASU_SPAWNED=true
+            exec "$@"
+        }
+
+        if [[ -n "${TERMINAL:-}" ]]; then
+            read -ra term_custom <<< "$TERMINAL"
+            if command -v "${term_custom[0]}" >/dev/null 2>&1; then
+                if (( ${#term_custom[@]} > 1 )); then
+                    spawn_term "${term_custom[@]}" "$target_script"
+                elif [[ "${term_custom[0]}" =~ ^(kitty|gnome-terminal)$ ]]; then
+                    spawn_term "${term_custom[0]}" -- "$target_script"
+                elif [[ "${term_custom[0]}" == "foot" ]]; then
+                    spawn_term "${term_custom[0]}" "$target_script"
+                elif [[ "${term_custom[0]}" == "wezterm" ]]; then
+                    spawn_term "${term_custom[0]}" start -- "$target_script"
+                else
+                    spawn_term "${term_custom[0]}" -e "$target_script"
+                fi
+            fi
+        fi
+
+        if command -v xdg-terminal-exec >/dev/null 2>&1; then
+            spawn_term xdg-terminal-exec "$target_script"
+        fi
+
+        local term_candidates=(
+            "ghostty -e"
+            "alacritty -e"
+            "kitty --"
+            "konsole -e"
+            "gnome-terminal --"
+            "xfce4-terminal --disable-server -x"
+            "terminator -x"
+            "tilix -e"
+            "foot"
+            "wezterm start --"
+            "qterminal -e"
+            "lxterminal -e"
+            "mate-terminal -x"
+            "xterm -e"
+        )
+
+        for term_entry in "${term_candidates[@]}"; do
+            read -ra term_arr <<< "$term_entry"
+            local bin="${term_arr[0]}"
+            if command -v "$bin" >/dev/null 2>&1; then
+                spawn_term "${term_arr[@]}" "$target_script"
+            fi
+        done
+    fi
+}
+
+if [[ "${1:-}" == "--notify-worker" ]]; then
+    handle_notify_worker "$@"
+    exit 0
+fi
+
+if [[ "${1:-}" == "--news-worker" ]]; then
+    handle_news_worker "$@"
+    exit 0
+fi
 
 if ! $DAEMON_MODE && [ -d "$CONFIG_DIR" ]; then
     dir_owner=$(stat -Lc '%u' "$CONFIG_DIR" 2>/dev/null || echo "")
@@ -1144,6 +1340,7 @@ T_CRIT_H=12
 T_DE_H=12
 T_NUKE_H=24
 IGNORE_PATCH_TIMERS=true
+# shellcheck disable=SC2034
 SILENCE_UPDATES=6h
 PROMPT_MIRROR_REFRESH=false
 AUR_HELPER_OVERRIDE=""
@@ -1696,80 +1893,10 @@ EOF
                     if command -v notify-send >/dev/null 2>&1; then
                         local notif_icon="dialog-warning"
                         [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
+                        local target_script
+                        target_script="$(realpath "$(command -v "${BASH_SOURCE:-$0}" 2>/dev/null || echo "${BASH_SOURCE:-$0}")")"
 
-                        (
-                            notif_daemon=$(dbus-send --session --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation 2>/dev/null | awk -F'"' '/string/ {print $2; exit}')
-                            notif_daemon=${notif_daemon,,}
-                            desktop_env="${XDG_CURRENT_DESKTOP:-}"
-                            desktop_env="${desktop_env,,}"
-
-                            supports_actions=false
-                            if notify-send --help 2>&1 | grep -q -- "--action"; then
-                                supports_actions=true
-                            fi
-
-                            use_single_action=false
-                            if [[ "$notif_daemon" =~ (mako|dunst|lxqt|xfce|fnott|wired) ]] || [[ "$desktop_env" =~ (sway|i3|hyprland|niri|lxqt|xfce|wlroots) ]]; then
-                                use_single_action=true
-                            fi
-
-                            action=""
-                            if [[ "$supports_actions" == "true" ]]; then
-                                if [[ "$use_single_action" == "true" ]]; then
-                                    action=$(notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
-                                else
-                                    action=$(notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="read=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
-                                fi
-                            else
-                                notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." >/dev/null 2>&1 || true
-                            fi
-
-                            action_clean=$(echo "$action" | tr -d ' \n\r')
-
-                            if [[ "$action_clean" == "silence" || ( "$use_single_action" == "true" && "$action_clean" == "1" ) || ( "$use_single_action" == "false" && "$action_clean" == "2" ) ]]; then
-                                echo "${news_ts}|silenced" > "$NEWS_CACHE"
-                            elif [[ "$action_clean" == "read" || "$action_clean" == "default" || "$action_clean" == "0" || ( "$use_single_action" == "false" && "$action_clean" == "1" ) ]]; then
-                                echo "${news_ts}|silenced" > "$NEWS_CACHE"
-
-                                open_url() {
-                                    local url="$1"
-
-                                    run_cmd() {
-                                        local cmd="$1"
-                                        local arg="$2"
-                                        if command -v setsid >/dev/null 2>&1; then
-                                            setsid -f "$cmd" "$arg" </dev/null >/dev/null 2>&1
-                                        else
-                                            nohup "$cmd" "$arg" </dev/null >/dev/null 2>&1 &
-                                            disown 2>/dev/null || true
-                                        fi
-                                    }
-
-                                    local default_browser=""
-                                    if command -v xdg-settings >/dev/null 2>&1; then
-                                        default_browser=$(xdg-settings get default-web-browser 2>/dev/null)
-                                        default_browser="${default_browser%.desktop}"
-                                    fi
-                                    if [[ -n "$default_browser" ]] && command -v "$default_browser" >/dev/null 2>&1; then
-                                        run_cmd "$default_browser" "$url"
-                                        return 0
-                                    fi
-                                    if command -v xdg-open >/dev/null 2>&1; then
-                                        run_cmd "xdg-open" "$url"
-                                        return 0
-                                    fi
-                                    for browser in "firefox" "chromium" "google-chrome-stable" "librewolf" "brave" "waterfox" "opera" "epiphany" "falkon"; do
-                                        if command -v "$browser" >/dev/null 2>&1; then
-                                            run_cmd "$browser" "$url"
-                                            return 0
-                                        fi
-                                    done
-                                }
-
-                                open_url "https://archlinux.org/"
-                            fi
-                        ) &
-                        disown 2>/dev/null || true
+                        launch_detached "$target_script" --news-worker "$notif_icon" "$diff_hours" "$news_ts"
                     fi
                 fi
             fi
@@ -1931,7 +2058,6 @@ check_reboot_needed() {
     fi
 }
 
-# --- 5. Mirror Refresh Function ---
 get_current_mirror() {
     local mirror
     mirror=$(awk '/^[ \t]*Server[ \t]*=/ {
@@ -3070,115 +3196,7 @@ if [[ "$DAEMON_MODE" == true ]]; then
             [[ -f "$ICON_PATH" ]] && notif_icon="$ICON_PATH"
             target_script="$(realpath "$(command -v "${BASH_SOURCE:-$0}" 2>/dev/null || echo "${BASH_SOURCE:-$0}")")"
 
-            (
-                notif_daemon=$(dbus-send --session --print-reply --dest=org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation 2>/dev/null | awk -F'"' '/string/ {print $2; exit}')
-                notif_daemon=${notif_daemon,,}
-                desktop_env="${XDG_CURRENT_DESKTOP:-}"
-                desktop_env="${desktop_env,,}"
-
-                supports_actions=false
-                if notify-send --help 2>&1 | grep -q -- "--action"; then
-                    supports_actions=true
-                fi
-
-                use_single_action=false
-                if [[ "$notif_daemon" =~ (mako|dunst|lxqt|xfce|fnott|wired) ]] || [[ "$desktop_env" =~ (sway|i3|hyprland|niri|lxqt|xfce|wlroots) ]]; then
-                    use_single_action=true
-                fi
-
-                action=""
-                if [[ "$supports_actions" == "true" ]]; then
-                    if [[ "$use_single_action" == "true" ]]; then
-                        action=$(notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" --action="default=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
-                    else
-                        action=$(notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" --action="default=Update Now" --action="update=Update Now" --action="silence=Silence" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
-                    fi
-                else
-                    notify-send -a "Arch Smart Update" -u normal -i "$notif_icon" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." >/dev/null 2>&1 || true
-                fi
-
-                action_clean=$(echo "$action" | tr -d ' \n\r')
-
-                if [[ "$action_clean" == "silence" || ( "$use_single_action" == "true" && "$action_clean" == "1" ) || ( "$use_single_action" == "false" && "$action_clean" == "2" ) ]]; then
-                    silence_sec=21600
-                    if [[ "$SILENCE_UPDATES" =~ ^([0-9]+)$ ]]; then
-                        silence_sec=$(( BASH_REMATCH[1] * 3600 ))
-                    elif [[ "$SILENCE_UPDATES" =~ ^([0-9]+)[[:space:]]*([a-zA-Z]+)$ ]]; then
-                        num="${BASH_REMATCH[1]}"
-                        unit="${BASH_REMATCH[2],,}"
-                        case "$unit" in
-                            s|sec|secs|second|seconds) silence_sec="$num" ;;
-                            m|min|mins|minute|minutes) silence_sec=$(( num * 60 )) ;;
-                            h|hr|hrs|hour|hours) silence_sec=$(( num * 3600 )) ;;
-                            d|day|days) silence_sec=$(( num * 86400 )) ;;
-                            w|wk|wks|week|weeks) silence_sec=$(( num * 604800 )) ;;
-                        esac
-                    fi
-                    silence_ts=$(( $(date +%s) + silence_sec ))
-                    lock_file="${CONFIG_DIR}/.state.lock"
-                    if touch "$lock_file" 2>/dev/null && exec 200<>"$lock_file" 2>/dev/null; then
-                        if flock -w 5 -x 200 2>/dev/null; then
-                            echo "$silence_ts" > "${CONFIG_DIR}/next_check.conf"
-                        fi
-                        exec 200>&- 2>/dev/null || true
-                    fi
-                    exit 0
-                elif [[ "$action_clean" == "update" || "$action_clean" == "default" || "$action_clean" == "0" || ( "$use_single_action" == "false" && "$action_clean" == "1" ) ]]; then
-                    sleep 0.15
-
-                    spawn_term() {
-                        ASU_SPAWNED=true launch_detached "$@"
-                        exit 0
-                    }
-
-                    if [[ -n "${TERMINAL:-}" ]]; then
-                        read -ra term_custom <<< "$TERMINAL"
-                        if command -v "${term_custom[0]}" >/dev/null 2>&1; then
-                            if (( ${#term_custom[@]} > 1 )); then
-                                spawn_term "${term_custom[@]}" "$target_script"
-                            elif [[ "${term_custom[0]}" =~ ^(kitty|gnome-terminal)$ ]]; then
-                                spawn_term "${term_custom[0]}" -- "$target_script"
-                            elif [[ "${term_custom[0]}" == "foot" ]]; then
-                                spawn_term "${term_custom[0]}" "$target_script"
-                            elif [[ "${term_custom[0]}" == "wezterm" ]]; then
-                                spawn_term "${term_custom[0]}" start -- "$target_script"
-                            else
-                                spawn_term "${term_custom[0]}" -e "$target_script"
-                            fi
-                        fi
-                    fi
-
-                    if command -v xdg-terminal-exec >/dev/null 2>&1; then
-                        spawn_term xdg-terminal-exec "$target_script"
-                    fi
-
-                    term_candidates=(
-                        "ghostty -e"
-                        "alacritty -e"
-                        "kitty --"
-                        "konsole -e"
-                        "gnome-terminal --"
-                        "xfce4-terminal --disable-server -x"
-                        "terminator -x"
-                        "tilix -e"
-                        "foot"
-                        "wezterm start --"
-                        "qterminal -e"
-                        "lxterminal -e"
-                        "mate-terminal -x"
-                        "xterm -e"
-                    )
-
-                    for term_entry in "${term_candidates[@]}"; do
-                        read -ra term_arr <<< "$term_entry"
-                        bin="${term_arr[0]}"
-                        if command -v "$bin" >/dev/null 2>&1; then
-                            spawn_term "${term_arr[@]}" "$target_script"
-                        fi
-                    done
-                fi
-            ) &
-            disown 2>/dev/null || true
+            launch_detached "$target_script" --notify-worker "$notif_icon" "$pkg_count" "$aur_count"
         fi
     fi
     exit 0
