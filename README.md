@@ -77,11 +77,11 @@ To ensure your personal settings are never overwritten by script updates, the co
 **2. User Managed (Safe from overwrites):**
 - `settings.conf` — Your master configuration file. Here you can configure:
   - **General Settings:** `PROMPT_MIRROR_REFRESH`, `MAX_BACKUP_COPIES`, `AUR_HELPER_OVERRIDE`, `ENABLE_POST_CLEANUP`.
-  - **Daemon & Logging:** Configure `ENABLE_BACKGROUND_CHECK`, systemd timer intervals, and `GENERATE_LOGS`.
+ - **Daemon & Logging:** Configure `ENABLE_BACKGROUND_CHECK`, check intervals, `NOTIFICATION_TIMEOUT`, `SILENCE_UPDATES`, and `GENERATE_LOGS`.
   - **Overrides:** Define a `CUSTOM_REFLECTOR_CMD` or define `CUSTOM_CMDS` (e.g., `flatpak update -y`) to run instead of the standard utilities.
   - **User Packages:** Add your own apps to the arrays (e.g., `USER_CRITICAL_PKGS=("my-important-app")`) to integrate them into the Advisor's threat levels.
 
-Whenever the master configuration on GitHub is updated, the script will quietly pull the changes without touching your custom files. If new features or options are introduced to `settings.default.conf` that are missing in your active `settings.conf`, the script will display a notice. You can safely merge and align your active configuration to adopt these new options (while fully preserving all your custom settings, user packages, and custom update commands) by running the script with the --reconfigure flag.
+Whenever the master configuration on GitHub is updated, the script will quietly pull the changes without touching your custom files. If new features or options are introduced to `settings.default.conf` that are missing in your active `settings.conf`, the script will display a notice. You can safely merge and align your active configuration to adopt these new options (while fully preserving all your custom settings, user packages, and custom update commands) by running the script with the `--reconfigure` flag.
 
 ## 📋 Dependencies
 
