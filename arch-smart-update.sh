@@ -916,7 +916,7 @@ EOF
             if [[ $? -eq 0 && -f "${real_settings_conf}.tmp" ]]; then
                 mv "${real_settings_conf}.tmp" "$real_settings_conf"
                 chmod 600 "$real_settings_conf"
-                echo -e "\n${green}Smart configuration migration for settings.conf has completed successfully.${reset}"
+                echo -e "\n${green}Smart configuration migration completed successfully.${reset}"
                 removed_any=true
             else
                 echo -e "${red}Error: Failed to process and merge configuration files.${reset}"
@@ -930,9 +930,7 @@ EOF
         fi
     fi
 
-    if [[ "$removed_any" == "true" ]]; then
-        echo -e "${yellow}Configuration re-alignment completed successfully.${reset}"
-    else
+    if [[ "$removed_any" == "false" ]]; then
         echo -e "${yellow}No active configuration or background service found to reset.${reset}"
     fi
     exit 0
