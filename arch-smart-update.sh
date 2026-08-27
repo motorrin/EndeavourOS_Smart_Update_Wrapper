@@ -207,12 +207,12 @@ handle_news_worker() {
 
     if [[ "$supports_actions" == "true" ]]; then
         if [[ "$use_single_action" == "true" ]]; then
-            action=$(notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
+            action=$(notify-send -t 0 -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
         else
-            action=$(notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="read=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
+            action=$(notify-send -t 0 -a "Arch Smart Update" -u critical -i "$notif_icon" --action="default=Read News" --action="read=Read News" --action="silence=Silence" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." 2>/dev/null) || action=""
         fi
     else
-        notify-send -a "Arch Smart Update" -u critical -i "$notif_icon" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." >/dev/null 2>&1 || true
+        notify-send -t 0 -a "Arch Smart Update" -u critical -i "$notif_icon" "Attention: Arch News detected!" "Published $diff_hours h. ago.\nCheck archlinux.org before updating." >/dev/null 2>&1 || true
     fi
 
     action_clean=$(echo "$action" | tr -d ' \n\r')
@@ -248,14 +248,28 @@ handle_notify_worker() {
     local notif_icon="${2:-software-update-available}"
     local pkg_count="${3:-0}"
     local aur_count="${4:-0}"
+    local notif_timeout=60000
     local target_script
     target_script="$(realpath "$(command -v "${BASH_SOURCE:-$0}" 2>/dev/null || echo "${BASH_SOURCE:-$0}")")"
 
     local silence_cfg="6h"
     if [[ -f "$CONFIG_DIR/settings.conf" ]]; then
-        local raw_silence
+        local raw_silence raw_timeout
         raw_silence=$(awk -F'=' '/^[[:space:]]*SILENCE_UPDATES[[:space:]]*=/ {gsub(/["\047]/, "", $2); sub(/[[:space:]]#.*$/, "", $2); gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' "$CONFIG_DIR/settings.conf" 2>/dev/null || true)
         [[ -n "$raw_silence" ]] && silence_cfg="$raw_silence"
+        raw_timeout=$(awk -F'=' '/^[[:space:]]*NOTIFICATION_TIMEOUT[[:space:]]*=/ {gsub(/["\047]/, "", $2); sub(/[[:space:]]#.*$/, "", $2); gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}' "$CONFIG_DIR/settings.conf" 2>/dev/null || true)
+        if [[ "$raw_timeout" =~ ^([0-9]+)$ ]]; then
+            notif_timeout="${BASH_REMATCH[1]}"
+        elif [[ "$raw_timeout" =~ ^([0-9]+)[[:space:]]*([a-zA-Z]+)$ ]]; then
+            local t_num="${BASH_REMATCH[1]}"
+            local t_unit="${BASH_REMATCH[2],,}"
+            case "$t_unit" in
+                ms|msec|msecs|millisecond|milliseconds) notif_timeout="$t_num" ;;
+                s|sec|secs|second|seconds) notif_timeout=$(( t_num * 1000 )) ;;
+                m|min|mins|minute|minutes) notif_timeout=$(( t_num * 60000 )) ;;
+                h|hr|hrs|hour|hours) notif_timeout=$(( t_num * 3600000 )) ;;
+            esac
+        fi
     fi
 
     local notif_daemon desktop_env supports_actions=false use_single_action=false action="" action_clean=""
@@ -274,19 +288,19 @@ handle_notify_worker() {
 
     if [[ "$supports_actions" == "true" ]]; then
         if [[ "$use_single_action" == "true" ]]; then
-            action=$(notify-send -t 0 -a "Arch Smart Update" -u normal -i "$notif_icon" \
+            action=$(notify-send -t "$notif_timeout" -a "Arch Smart Update" -u normal -i "$notif_icon" \
                 --action="default=Update Now" \
                 --action="silence=Silence" \
                 "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
         else
-            action=$(notify-send -t 0 -a "Arch Smart Update" -u normal -i "$notif_icon" \
+            action=$(notify-send -t "$notif_timeout" -a "Arch Smart Update" -u normal -i "$notif_icon" \
                 --action="default=Update Now" \
                 --action="update=Update Now" \
                 --action="silence=Silence" \
                 "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." 2>/dev/null) || action=""
         fi
     else
-        notify-send -t 0 -a "Arch Smart Update" -u normal -i "$notif_icon" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." >/dev/null 2>&1 || true
+        notify-send -t "$notif_timeout" -a "Arch Smart Update" -u normal -i "$notif_icon" "Safe Updates Available" "Found $pkg_count updates ($aur_count AUR).\nReady to install." >/dev/null 2>&1 || true
     fi
 
     action_clean=$(echo "$action" | tr -d ' \n\r')
@@ -1342,6 +1356,8 @@ T_NUKE_H=24
 IGNORE_PATCH_TIMERS=true
 # shellcheck disable=SC2034
 SILENCE_UPDATES=6h
+# shellcheck disable=SC2034
+NOTIFICATION_TIMEOUT=60000
 PROMPT_MIRROR_REFRESH=false
 AUR_HELPER_OVERRIDE=""
 CUSTOM_REFLECTOR_CMD=""
@@ -1359,7 +1375,7 @@ if [[ -n "$SETTINGS_CONF" && -f "$SETTINGS_CONF" ]]; then
                 val="${BASH_REMATCH[1]}"
             fi
             case "$key" in
-                AUR_HELPER_OVERRIDE|PROMPT_MIRROR_REFRESH|MAX_BACKUP_COPIES|CHECK_INTERVAL|START_DELAY|ENABLE_BACKGROUND_CHECK|T_MIRROR_H|T_FEAT_H|T_CRIT_H|T_DE_H|T_NUKE_H|IGNORE_PATCH_TIMERS|GENERATE_LOGS|MAX_LOG_NUMBERS|CUSTOM_REFLECTOR_CMD|ENABLE_POST_CLEANUP|SILENCE_UPDATES)
+                AUR_HELPER_OVERRIDE|PROMPT_MIRROR_REFRESH|MAX_BACKUP_COPIES|CHECK_INTERVAL|START_DELAY|ENABLE_BACKGROUND_CHECK|T_MIRROR_H|T_FEAT_H|T_CRIT_H|T_DE_H|T_NUKE_H|IGNORE_PATCH_TIMERS|GENERATE_LOGS|MAX_LOG_NUMBERS|CUSTOM_REFLECTOR_CMD|ENABLE_POST_CLEANUP|SILENCE_UPDATES|NOTIFICATION_TIMEOUT)
                     declare -g "$key=$val"
                     ;;
             esac
