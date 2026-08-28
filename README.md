@@ -37,9 +37,11 @@ The script also supports distribution-specific utilities on **EndeavourOS** (suc
 - **⚡ Safe RAM-Based Sync (`/tmp`):** The script never touches your live local pacman database during the checking phase. All database syncing and calculations are done in an isolated temporary directory in your RAM (`/tmp/checkupdates-db...`). This 100% prevents catastrophic "partial upgrade" scenarios if you decide to cancel the update.
 - **🧠 Smart Update Advisor:** Automatically analyzes the criticality of pending packages. If a system-crashing update (like the Linux kernel, `glibc`, or NVIDIA drivers) was released less than 24 hours ago, the script strongly advises you to wait, ensuring upstream stability before you apply it.
 - **📰 Arch News Integration (RSS):** Fetches the latest official Arch Linux news feed. If there’s a recent post requiring manual intervention, you'll get a bright warning before you press "Y". 
-- **🛡️ Automated Pacman DB Backups:** Automatically creates a `.tar.zst` backup (using fast Zstandard compression) of your `/var/lib/pacman/local` database before applying any changes. It keeps the last 5 copies so you can always roll back seamlessly.
-- **🚀 Smart Mirror Management:** Monitors your mirrorlist age and sync speeds. If mirrors are older than 7 days or time out, it detects the instability and offers to automatically refresh them via `reflector`, `eos-rankmirrors`, or `cachyos-rate-mirrors`.
-- **📊 Rich CLI Analytics:** Displays a beautifully formatted, color-coded terminal table showing update types (MAJOR, MINOR, PATCH, CALVER, EPOCH), package age in hours, download sizes, repositories, and descriptions.
+- **🛡️ Automated Pacman DB Backups & Keyring Recovery:** Automatically creates a `.tar.zst` backup of `/var/lib/pacman/local` before updates. If a transaction fails due to invalid/corrupted PGP signatures or broken keys, the script automatically triggers a Keyring Hotfix (`pacman-key --init && pacman-key --populate`) and safely retries the update.
+- **💾 Storage & Btrfs Snapshot Safety Check:** Calculates required disk space based on download size with an expansion multiplier. Automatically detects Btrfs and active snapshot tools (`snapper`, `timeshift`, `snap-pac`), enforcing higher space thresholds to prevent transaction lockups and filesystem freezes. Also validates `/boot` and `/efi` partitions.
+- **🚀 Smart Mirror Management:** Monitors mirrorlist age and sync health. Ranks official Arch mirrors using fast `rate-mirrors` (with an automatic fallback to `reflector`), while seamlessly supporting distribution-specific mirror tools on EndeavourOS (`eos-rankmirrors`) and CachyOS (`cachyos-rate-mirrors`).
+- **🔄 Outdated AUR Rebuild Detection:** Integrates with `rebuild-detector` (`checkrebuild`) to inspect foreign packages linked against older system shared libraries (e.g. after major Python/ICU updates) and offers a one-click automated rebuild via your active AUR helper.
+- **📊 Rich CLI Analytics:** Displays a terminal table showing update types (MAJOR, MINOR, PATCH, CALVER, EPOCH), package age in hours, download sizes, repositories, and descriptions.
 - **🔒 Intelligent Lock File Removal:** Detects a stale `/var/lib/pacman/db.lck` file and checks if a package manager is actually running. It uses `fuser` if available, or natively extracts the lock PID and scans the process table (`pgrep` / `/proc`) as a fallback to safely remove phantom locks.
 - **🚨 IgnorePkg Conflict Checker:** If you have frozen packages via `pacman.conf`, the script simulates the update in the background and warns you of any dependency breakages caused by skipped packages.
 - **🧹 Automated System Cleanup:** Optional post-update cleanup that safely removes orphaned packages, clears partial downloads, empties the pacman/AUR cache, vacuums the systemd journal (keeping 100M), and clears user thumbnail caches.
@@ -75,11 +77,14 @@ To ensure your personal settings are never overwritten by script updates, the co
 - `*.default.conf` — Templates showing the latest recommended syntax.
 
 **2. User Managed (Safe from overwrites):**
-- `settings.conf` — Your master configuration file. Here you can configure:
-  - **General Settings:** `PROMPT_MIRROR_REFRESH`, `MAX_BACKUP_COPIES`, `AUR_HELPER_OVERRIDE`, `ENABLE_POST_CLEANUP`.
- - **Daemon & Logging:** Configure `ENABLE_BACKGROUND_CHECK`, check intervals, `NOTIFICATION_TIMEOUT`, `SILENCE_UPDATES`, and `GENERATE_LOGS`.
-  - **Overrides:** Define a `CUSTOM_REFLECTOR_CMD` or define `CUSTOM_CMDS` (e.g., `flatpak update -y`) to run instead of the standard utilities.
-  - **User Packages:** Add your own apps to the arrays (e.g., `USER_CRITICAL_PKGS=("my-important-app")`) to integrate them into the Advisor's threat levels.
+- `settings.conf` — Your master configuration file, structured into 7 modular sections:
+  - **General Settings:** `PROMPT_MIRROR_REFRESH` (confirm mirror ranking), `MAX_BACKUP_COPIES` (pacman DB backup retention), `AUR_HELPER_OVERRIDE`, `ENABLE_POST_CLEANUP`, `ENABLE_AUR_REBUILD_CHECK`, and minimum free disk space thresholds (`MIN_DISK_SPACE_MB`, `MIN_BTRFS_SPACE_MB`).
+  - **Update Delays (Hours):** Custom stability cooldown timers for packages (`T_MIRROR_H`, `T_FEAT_H`, `T_CRIT_H`, `T_DE_H`, `T_NUKE_H`) and patch-level timer bypass (`IGNORE_PATCH_TIMERS`).
+  - **Background Checker Settings:** Configure daemon monitoring (`ENABLE_BACKGROUND_CHECK`), check frequency (`CHECK_INTERVAL`), post-boot delay (`START_DELAY`), snooze duration (`SILENCE_UPDATES`), and notification display timeout (`NOTIFICATION_TIMEOUT`).
+  - **Logging:** Enable session log generation (`GENERATE_LOGS`) and set log rotation limits (`MAX_LOG_NUMBERS`).
+  - **Mirror Ranking Commands:** Define custom parameters for mirror ranking tools via `CUSTOM_RATE_MIRRORS_CMD` or `CUSTOM_REFLECTOR_CMD`.
+  - **Custom Update Commands:** Add custom pre/post commands in `CUSTOM_CMDS` to run alongside or override standard updates (strictly verified for daemon security).
+  - **User Packages:** Append your own applications to threat tiers (`USER_NUCLEAR_PKGS`, `USER_CRITICAL_PKGS`, `USER_FEATURE_PKGS`) to inherit customized Advisor stability cooldowns.
 
 Whenever the master configuration on GitHub is updated, the script will quietly pull the changes without touching your custom files. If new features or options are introduced to `settings.default.conf` that are missing in your active `settings.conf`, the script will display a notice. You can safely merge and align your active configuration to adopt these new options (while fully preserving all your custom settings, user packages, and custom update commands) by running the script with the `--reconfigure` flag.
 
@@ -94,10 +99,13 @@ The script relies on standard Arch base system utilities:
 - `libnotify` — Required for interactive desktop notifications in daemon mode.
 - `util-linux` — Provides `script` for clean terminal log captures, `flock` for daemon concurrency locking, and `setsid` for detached processes.
 - `xdg-utils` / `xdg-terminal-exec` — For opening Arch News links in your default browser (`xdg-open`) and launching the default terminal emulator from notifications.
+- `rate-mirrors` — Fast primary ranking tool for official Arch Linux mirrors.
+- `reflector` — Fallback ranking tool for official Arch Linux mirrors.
+- `eos-rankmirrors` / `cachyos-rate-mirrors` — For ranking distribution-specific repositories on EndeavourOS and CachyOS.
+- `rebuild-detector` — Provides `checkrebuild` to identify foreign AUR packages requiring recompilation against updated libraries.
 - `flatpak` — Enables automated removal of unused Flatpak runtimes during post-update cleanup.
 - `gamemode` — Automatically postpones background update checks while gaming.
 - `snap-pac` — Triggers automated pre/post Btrfs snapshots on update (if using Snapper).
-- `reflector` / `eos-rankmirrors` / `cachyos-rate-mirrors` — For automated mirror ranking and refresh prompts.
 - `yay` / `paru` / `pikaur` / `aura` / `rua` / `trizen` / `pacaur` / `pakku` — For managing foreign AUR packages.
 
 <a name="installation"></a>
