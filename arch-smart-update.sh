@@ -2412,7 +2412,7 @@ refresh_mirrors() {
     if [[ -n "$CUSTOM_RM" ]]; then
         DISPLAY_CMD="$CUSTOM_RM"
     elif command -v rate-mirrors &>/dev/null; then
-        DISPLAY_CMD="rate-mirrors --concurrency=30 --disable-comments --protocol=https arch"
+        DISPLAY_CMD="rate-mirrors --concurrency=30 --disable-comments-in-file --protocol=https arch"
     elif [[ -n "$CUSTOM_REFL" ]]; then
         DISPLAY_CMD="$CUSTOM_REFL"
     else
@@ -2500,10 +2500,10 @@ refresh_mirrors() {
                 local rm_tmp rm_exit
                 create_temp_file rm_tmp "asu_ratemirrors"
 
-                { env LC_ALL=C rate-mirrors --concurrency=30 --disable-comments --protocol=https arch 1> "$rm_tmp"; } 2>&1 | tee "$REFL_LOG"
+                env LC_ALL=C rate-mirrors --concurrency=30 --disable-comments-in-file --save="$rm_tmp" --protocol=https arch 2>&1 | tee "$REFL_LOG"
                 rm_exit=${PIPESTATUS[0]}
 
-                if [[ $rm_exit -eq 0 ]]; then
+                if [[ $rm_exit -eq 0 && -s "$rm_tmp" ]]; then
                     local srv_count
                     srv_count=$(grep -c "^[[:space:]]*Server[[:space:]]*=" "$rm_tmp" 2>/dev/null || true)
                     srv_count=${srv_count:-0}
