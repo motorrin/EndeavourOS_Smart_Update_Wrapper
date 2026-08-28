@@ -2497,14 +2497,16 @@ refresh_mirrors() {
                 fi
             elif command -v rate-mirrors &>/dev/null; then
                 echo -e "\n${blue}Ranking mirrors using rate-mirrors (Fast)...${reset}"
-                local rm_tmp rm_err
+                local rm_tmp rm_exit
                 create_temp_file rm_tmp "asu_ratemirrors"
-                create_temp_file rm_err "asu_rm_err"
 
-                if env LC_ALL=C rate-mirrors --concurrency=30 --disable-comments --protocol=https arch 1> "$rm_tmp" 2> "$rm_err"; then
-                    cat "$rm_err" > "$REFL_LOG" 2>/dev/null || true
+                { env LC_ALL=C rate-mirrors --concurrency=30 --disable-comments --protocol=https arch 1> "$rm_tmp"; } 2>&1 | tee "$REFL_LOG"
+                rm_exit=${PIPESTATUS[0]}
+
+                if [[ $rm_exit -eq 0 ]]; then
                     local srv_count
                     srv_count=$(grep -c "^[[:space:]]*Server[[:space:]]*=" "$rm_tmp" 2>/dev/null || true)
+                    srv_count=${srv_count:-0}
                     if (( srv_count >= 3 )); then
                         if sudo cp "$rm_tmp" /etc/pacman.d/mirrorlist && sudo chmod 644 /etc/pacman.d/mirrorlist; then
                             new_mirror=$(get_current_mirror)
@@ -2512,12 +2514,9 @@ refresh_mirrors() {
                             REFL_SUCCESS=true
                         fi
                     fi
-                else
-                    cat "$rm_err" > "$REFL_LOG" 2>/dev/null || true
-                    cat "$rm_err" >&2 2>/dev/null || true
                 fi
 
-                rm -f "$rm_tmp" "$rm_err" 2>/dev/null || true
+                rm -f "$rm_tmp" 2>/dev/null || true
                 if ! $REFL_SUCCESS; then
                     echo -e "${yellow}rate-mirrors failed or returned insufficient mirrors. Falling back to reflector...${reset}"
                 fi
