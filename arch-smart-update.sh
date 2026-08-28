@@ -425,6 +425,7 @@ REFL_LOG=""
 CHECK_DB=""
 SUDO_KEEP_ALIVE_PID=""
 CURRENT_TMP_LOG=""
+CURRENT_TASK_CAPTURE=""
 MANIFEST_TMP=""
 
 cleanup() {
@@ -438,6 +439,7 @@ cleanup() {
     done
     [[ -n "${SETTINGS_CONF:-}" && -f "${SETTINGS_CONF}.tmp" ]] && files_to_remove+=("${SETTINGS_CONF}.tmp")
     [[ -n "${CURRENT_TMP_LOG:-}" && -f "$CURRENT_TMP_LOG" ]] && files_to_remove+=("$CURRENT_TMP_LOG")
+    [[ -n "${CURRENT_TASK_CAPTURE:-}" && -f "$CURRENT_TASK_CAPTURE" ]] && files_to_remove+=("$CURRENT_TASK_CAPTURE")
 
     if [[ ${#files_to_remove[@]} -gt 0 ]]; then
         rm -f "${files_to_remove[@]}"
@@ -1342,6 +1344,9 @@ fi
 
 ENABLE_BACKGROUND_CHECK=false
 ENABLE_POST_CLEANUP=false
+ENABLE_AUR_REBUILD_CHECK=true
+MIN_DISK_SPACE_MB=2048
+MIN_BTRFS_SPACE_MB=4608
 CHECK_INTERVAL=30min
 START_DELAY=5min
 GENERATE_LOGS=false
@@ -1358,6 +1363,7 @@ SILENCE_UPDATES=6h
 NOTIFICATION_TIMEOUT=60000
 PROMPT_MIRROR_REFRESH=false
 AUR_HELPER_OVERRIDE=""
+CUSTOM_RATE_MIRRORS_CMD=""
 CUSTOM_REFLECTOR_CMD=""
 MAX_BACKUP_COPIES=5
 
@@ -1373,7 +1379,7 @@ if [[ -n "$SETTINGS_CONF" && -f "$SETTINGS_CONF" ]]; then
                 val="${BASH_REMATCH[1]}"
             fi
             case "$key" in
-                AUR_HELPER_OVERRIDE|PROMPT_MIRROR_REFRESH|MAX_BACKUP_COPIES|CHECK_INTERVAL|START_DELAY|ENABLE_BACKGROUND_CHECK|T_MIRROR_H|T_FEAT_H|T_CRIT_H|T_DE_H|T_NUKE_H|IGNORE_PATCH_TIMERS|GENERATE_LOGS|MAX_LOG_NUMBERS|CUSTOM_REFLECTOR_CMD|ENABLE_POST_CLEANUP|SILENCE_UPDATES|NOTIFICATION_TIMEOUT)
+                AUR_HELPER_OVERRIDE|PROMPT_MIRROR_REFRESH|MAX_BACKUP_COPIES|CHECK_INTERVAL|START_DELAY|ENABLE_BACKGROUND_CHECK|T_MIRROR_H|T_FEAT_H|T_CRIT_H|T_DE_H|T_NUKE_H|IGNORE_PATCH_TIMERS|GENERATE_LOGS|MAX_LOG_NUMBERS|CUSTOM_RATE_MIRRORS_CMD|CUSTOM_REFLECTOR_CMD|ENABLE_POST_CLEANUP|ENABLE_AUR_REBUILD_CHECK|MIN_DISK_SPACE_MB|MIN_BTRFS_SPACE_MB|SILENCE_UPDATES|NOTIFICATION_TIMEOUT)
                     declare -g "$key=$val"
                     ;;
             esac
@@ -1396,6 +1402,8 @@ if [[ -n "$SETTINGS_CONF" && -f "$SETTINGS_CONF" ]]; then
     [[ "$T_CRIT_H" =~ ^[0-9]+$ ]] || T_CRIT_H=12
     [[ "$T_DE_H" =~ ^[0-9]+$ ]] || T_DE_H=12
     [[ "$T_NUKE_H" =~ ^[0-9]+$ ]] || T_NUKE_H=24
+    [[ "$MIN_DISK_SPACE_MB" =~ ^[0-9]+$ ]] || MIN_DISK_SPACE_MB=2048
+    [[ "$MIN_BTRFS_SPACE_MB" =~ ^[0-9]+$ ]] || MIN_BTRFS_SPACE_MB=4608
 fi
 
 declare -A NUKE_MAP
@@ -1947,35 +1955,50 @@ backup_pacman_db() {
     fi
 }
 
+LAST_TASK_OUTPUT=""
+
 execute_update_task() {
     local cmd="${1:-}"
+    LAST_TASK_OUTPUT=""
 
-    if [[ "${ASU_TTY_OUT:-}" =~ ^[0-9]+$ ]] && [[ "${ASU_TTY_ERR:-}" =~ ^[0-9]+$ ]] && [ -t "$ASU_TTY_OUT" ] && [ -t 0 ]; then
-        if [[ "${GENERATE_LOGS,,}" == "true" && -n "${LOG_FILE:-}" ]]; then
-            local log_dir
-            log_dir=$(dirname "$LOG_FILE")
-            if [ -d "$log_dir" ] && [ -w "$log_dir" ] && { [ ! -e "$LOG_FILE" ] || { [ -f "$LOG_FILE" ] && [ -w "$LOG_FILE" ]; }; }; then
-                if command -v script >/dev/null 2>&1; then
-                    if env SHELL=/bin/bash script -f -q -e -c "true" /dev/null >/dev/null 2>&1; then
-                        local tmp_log
-                        local safe_tmp_dir="${XDG_RUNTIME_DIR:-$CONFIG_DIR}"
-                        if [[ ! -d "$safe_tmp_dir" || ! -w "$safe_tmp_dir" ]]; then
-                            safe_tmp_dir="/tmp"
-                        fi
-                        if tmp_log=$(mktemp "$safe_tmp_dir/asu_task.XXXXXX" 2>/dev/null); then
-                            CURRENT_TMP_LOG="$tmp_log"
-                            local wrapper="$cmd"
-                            local first_word=""
-                            if [[ "$cmd" =~ ^[[:space:]]*([^[:space:]]+) ]]; then
-                                first_word="${BASH_REMATCH[1]}"
-                            fi
-                            if [[ "$first_word" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku|aura|rua|topgrade|eos-update|cachy-update|arch-update)$ ]]; then
-                                wrapper="sudo -v && $cmd"
-                            fi
-                            env SHELL=/bin/bash script -f -q -e -c "$wrapper" "$tmp_log" <&0 1>&$ASU_TTY_OUT 2>&$ASU_TTY_ERR
-                            local ret=$?
-                            if [ -f "$tmp_log" ]; then
-                                env PYTHONIOENCODING=utf-8 python3 - "$tmp_log" <<'EOF' >> "$LOG_FILE" 2>/dev/null
+    local safe_tmp_dir="${XDG_RUNTIME_DIR:-$CONFIG_DIR}"
+    if [[ ! -d "$safe_tmp_dir" || ! -w "$safe_tmp_dir" ]]; then
+        safe_tmp_dir="/tmp"
+    fi
+
+    local task_capture=""
+    task_capture=$(mktemp "$safe_tmp_dir/asu_capture.XXXXXX" 2>/dev/null || mktemp "/tmp/asu_capture.XXXXXX")
+    CURRENT_TASK_CAPTURE="$task_capture"
+    local ret=0
+
+    local has_custom_tty=false
+    if [[ "${ASU_TTY_OUT:-}" =~ ^[0-9]+$ ]] && [[ "${ASU_TTY_ERR:-}" =~ ^[0-9]+$ ]]; then
+        if { true >&"$ASU_TTY_OUT"; } 2>/dev/null && { true >&"$ASU_TTY_ERR"; } 2>/dev/null; then
+            has_custom_tty=true
+        fi
+    fi
+
+    local wrapper="$cmd"
+    local first_word=""
+    if [[ "$cmd" =~ ^[[:space:]]*([^[:space:]]+) ]]; then
+        first_word="${BASH_REMATCH[1]}"
+    fi
+    if [[ "$first_word" =~ ^(yay|paru|pikaur|trizen|pacaur|pakku|aura|rua|topgrade|eos-update|cachy-update|arch-update)$ ]]; then
+        wrapper="sudo -v && $cmd"
+    fi
+
+    local executed_with_script=false
+    if $has_custom_tty && [ -t "$ASU_TTY_OUT" ] && [ -t 0 ] && command -v script >/dev/null 2>&1; then
+        if env SHELL=/bin/bash script -f -q -e -c "true" /dev/null >/dev/null 2>&1; then
+            local tmp_log=""
+            tmp_log=$(mktemp "$safe_tmp_dir/asu_task.XXXXXX" 2>/dev/null || mktemp "/tmp/asu_task.XXXXXX")
+            CURRENT_TMP_LOG="$tmp_log"
+
+            env SHELL=/bin/bash script -f -q -e -c "$wrapper" "$tmp_log" <&0 1>&$ASU_TTY_OUT 2>&$ASU_TTY_ERR
+            ret=$?
+
+            if [ -f "$tmp_log" ]; then
+                env PYTHONIOENCODING=utf-8 python3 - "$tmp_log" > "$task_capture" 2>/dev/null <<'EOF'
 import sys, re
 
 ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -1992,21 +2015,33 @@ try:
 except BaseException:
     sys.exit(0)
 EOF
-                                rm -f "$tmp_log"
-                            fi
-                            CURRENT_TMP_LOG=""
-                            return $ret
-                        fi
-                    fi
-                fi
+                rm -f "$tmp_log" 2>/dev/null || true
             fi
-            /bin/bash -c "$cmd" 1>&$ASU_TTY_OUT 2>&$ASU_TTY_ERR
-            return $?
+            CURRENT_TMP_LOG=""
+            executed_with_script=true
         fi
     fi
 
-    /bin/bash -c "$cmd"
-    return $?
+    if [[ "$executed_with_script" == "false" ]]; then
+        if $has_custom_tty; then
+            /bin/bash -c "$wrapper" 2>&1 | tee "$task_capture" 1>&$ASU_TTY_OUT 2>&$ASU_TTY_ERR
+            ret=${PIPESTATUS[0]}
+        else
+            /bin/bash -c "$wrapper" 2>&1 | tee "$task_capture"
+            ret=${PIPESTATUS[0]}
+        fi
+    fi
+
+    if [ -f "$task_capture" ]; then
+        LAST_TASK_OUTPUT=$(tail -n 300 "$task_capture" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g; s/\x1B\([B0]//g' || true)
+        if [[ "${GENERATE_LOGS,,}" == "true" && -n "${LOG_FILE:-}" ]]; then
+            cat "$task_capture" >> "$LOG_FILE" 2>/dev/null || true
+        fi
+        rm -f "$task_capture" 2>/dev/null || true
+    fi
+    CURRENT_TASK_CAPTURE=""
+
+    return "$ret"
 }
 
 check_reboot_needed() {
@@ -2072,6 +2107,254 @@ check_reboot_needed() {
     fi
 }
 
+check_disk_space() {
+    log_step "Checking available disk space..."
+    local cache_dir
+    cache_dir=$(pacman-conf CacheDir 2>/dev/null | head -n 1)
+    [[ -z "$cache_dir" ]] && cache_dir="/var/cache/pacman/pkg"
+    cache_dir="${cache_dir%/}"
+    
+    local resolved_cache_dir="$cache_dir"
+    local depth_guard=0
+    while [[ ! -d "$resolved_cache_dir" && "$resolved_cache_dir" != "/" && "$resolved_cache_dir" == *"/"* ]] && (( depth_guard < 32 )); do
+        resolved_cache_dir=$(dirname "$resolved_cache_dir")
+        ((depth_guard++))
+    done
+    [[ ! -d "$resolved_cache_dir" ]] && resolved_cache_dir="/"
+
+    local root_free_kb=0 cache_free_kb=0 boot_free_kb=0
+    root_free_kb=$(env LC_ALL=C df -Pk / 2>/dev/null | awk 'NR==2 {print $4}')
+    [[ "$root_free_kb" =~ ^[0-9]+$ ]] || root_free_kb=0
+
+    cache_free_kb=$(env LC_ALL=C df -Pk "$resolved_cache_dir" 2>/dev/null | awk 'NR==2 {print $4}')
+    [[ "$cache_free_kb" =~ ^[0-9]+$ ]] || cache_free_kb=0
+
+    local is_btrfs=false has_snaps=false
+    local root_fs cache_fs
+    root_fs=$(env LC_ALL=C df -PT / 2>/dev/null | awk 'NR==2 {print $2}')
+    cache_fs=$(env LC_ALL=C df -PT "$resolved_cache_dir" 2>/dev/null | awk 'NR==2 {print $2}')
+    [[ "${root_fs,,}" == "btrfs" || "${cache_fs,,}" == "btrfs" ]] && is_btrfs=true
+
+    if command -v snapper >/dev/null 2>&1 || command -v timeshift >/dev/null 2>&1 || pacman -Qq snap-pac >/dev/null 2>&1; then
+        has_snaps=true
+    fi
+
+    local min_space_mb=${MIN_DISK_SPACE_MB:-2048}
+    if [[ "$is_btrfs" == "true" || "$has_snaps" == "true" ]]; then
+        min_space_mb=${MIN_BTRFS_SPACE_MB:-4608}
+    fi
+
+    if [[ -n "${total_download_size:-}" ]]; then
+        local dl_num dl_unit est_mb=0
+        read -r dl_num dl_unit <<< "$total_download_size"
+        if [[ "$dl_num" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            case "${dl_unit^^}" in
+                GIB|GB) est_mb=$(env LC_ALL=C awk -v n="$dl_num" 'BEGIN { printf "%d", n * 1024 * 2.5 }' 2>/dev/null || echo 0) ;;
+                MIB|MB) est_mb=$(env LC_ALL=C awk -v n="$dl_num" 'BEGIN { printf "%d", n * 2.5 }' 2>/dev/null || echo 0) ;;
+            esac
+            [[ "$est_mb" =~ ^[0-9]+$ ]] || est_mb=0
+            if (( est_mb > min_space_mb )); then
+                min_space_mb=$est_mb
+            fi
+        fi
+    fi
+
+    local min_space_kb=$(( min_space_mb * 1024 ))
+    local root_free_mb=$(( root_free_kb / 1024 ))
+    local cache_free_mb=$(( cache_free_kb / 1024 ))
+
+    local space_failed=false
+    local fail_msg=""
+
+    if (( root_free_kb < min_space_kb )); then
+        space_failed=true
+        fail_msg="Root partition (/) has only ${root_free_mb} MB free space."
+    elif (( cache_free_kb < min_space_kb )); then
+        space_failed=true
+        fail_msg="Package cache directory (${cache_dir}) has only ${cache_free_mb} MB free space."
+    fi
+
+    if [[ "$space_failed" == "true" ]]; then
+        echo -e "\n${bg_nuke} LOW DISK SPACE WARNING ${reset}"
+        echo -e "${red}${fail_msg}${reset}"
+        if [[ "$is_btrfs" == "true" || "$has_snaps" == "true" ]]; then
+            echo -e "${yellow}Btrfs/Snapshots detected: updates require at least ${white}${min_space_mb} MB${yellow} to prevent transaction freeze.${reset}"
+        else
+            echo -e "${yellow}Recommended minimum free space is ${white}${min_space_mb} MB${yellow}.${reset}"
+        fi
+
+        if $DAEMON_MODE; then
+            log_step "Error: Insufficient disk space for update in background mode."
+            return 1
+        fi
+
+        echo -ne "${white}Continue update despite low disk space? [y/N]: ${reset}"
+        local ans_space=""
+        read -r ans_space </dev/tty || ans_space="n"
+        if [[ ! "$ans_space" =~ ^[Yy]$ ]]; then
+            echo -e "${red}Update aborted due to low disk space.${reset}"
+            exit 1
+        fi
+    fi
+
+    local boot_candidates=("/boot" "/efi" "/boot/efi")
+    local checked_mount_devices=()
+    for boot_target in "${boot_candidates[@]}"; do
+        if mountpoint -q "$boot_target" 2>/dev/null || sudo -n mountpoint -q "$boot_target" 2>/dev/null; then
+            local dev_id
+            dev_id=$(stat -Lc '%d' "$boot_target" 2>/dev/null || true)
+            [[ -z "$dev_id" ]] && dev_id=$(sudo -n stat -Lc '%d' "$boot_target" 2>/dev/null || true)
+
+            if [[ -n "$dev_id" ]]; then
+                local already_checked=false
+                for seen in "${checked_mount_devices[@]+"${checked_mount_devices[@]}"}"; do
+                    if [[ "$seen" == "$dev_id" ]]; then
+                        already_checked=true
+                        break
+                    fi
+                done
+                [[ "$already_checked" == "true" ]] && continue
+                checked_mount_devices+=("$dev_id")
+            fi
+
+            boot_free_kb=$(env LC_ALL=C df -Pk "$boot_target" 2>/dev/null | awk 'NR==2 {print $4}')
+            if [[ ! "$boot_free_kb" =~ ^[0-9]+$ ]]; then
+                boot_free_kb=$(sudo -n env LC_ALL=C df -Pk "$boot_target" 2>/dev/null | awk 'NR==2 {print $4}')
+            fi
+            if [[ "$boot_free_kb" =~ ^[0-9]+$ ]] && (( boot_free_kb < 65536 )); then
+                local boot_free_mb=$(( boot_free_kb / 1024 ))
+                echo -e "\n${yellow}Warning: ${boot_target} partition is low on space (${white}${boot_free_mb} MB${yellow} free).${reset}"
+                if ! $DAEMON_MODE; then
+                    echo -ne "${white}Continue anyway? [y/N]: ${reset}"
+                    local ans_boot="n"
+                    read -r ans_boot </dev/tty || ans_boot="n"
+                    if [[ ! "$ans_boot" =~ ^[Yy]$ ]]; then
+                        exit 1
+                    fi
+                fi
+            fi
+        fi
+    done
+    return 0
+}
+
+fix_pacman_keyrings() {
+    echo -e "\n${yellow}${bold}Signature verification failed. Initializing Keyring Hotfix...${reset}"
+    log_step "Running pacman-key reinitialization and population..."
+
+    local cache_dir
+    cache_dir=$(pacman-conf CacheDir 2>/dev/null | head -n 1)
+    cache_dir="${cache_dir%/}"
+    [[ -z "$cache_dir" ]] && cache_dir="/var/cache/pacman/pkg"
+
+    sudo gpgconf --homedir /etc/pacman.d/gnupg --kill all >/dev/null 2>&1 || true
+    sudo rm -rf /etc/pacman.d/gnupg/S.* 2>/dev/null || true
+    if [[ -d "$cache_dir" ]]; then
+        sudo rm -f "$cache_dir"/*.part "$cache_dir"/*.sig 2>/dev/null || true
+        sudo rm -f "$cache_dir"/*keyring*.pkg.tar* "$cache_dir"/*trusted*.pkg.tar* 2>/dev/null || true
+    fi
+
+    if ! sudo env LC_ALL=C pacman-key --init; then
+        echo -e "${red}Failed to initialize pacman keyring.${reset}"
+        return 1
+    fi
+
+    if ! sudo env LC_ALL=C pacman-key --populate; then
+        echo -e "${red}Failed to populate distribution keys.${reset}"
+        return 1
+    fi
+
+    local pkgs_keyrings=("archlinux-keyring")
+    pacman -Qq cachyos-keyring >/dev/null 2>&1 && pkgs_keyrings+=("cachyos-keyring")
+    pacman -Qq cachyos-trusted >/dev/null 2>&1 && pkgs_keyrings+=("cachyos-trusted")
+    pacman -Qq endeavouros-keyring >/dev/null 2>&1 && pkgs_keyrings+=("endeavouros-keyring")
+
+    if [[ "${IS_OFFLINE_MODE:-false}" != "true" ]]; then
+        sudo env LC_ALL=C pacman -Sy --needed --noconfirm "${pkgs_keyrings[@]}" >/dev/null 2>&1 || true
+    fi
+    echo -e "${green}Keyrings successfully restored and synchronized.${reset}\n"
+    return 0
+}
+
+check_aur_rebuild_needed() {
+    if [[ "${ENABLE_AUR_REBUILD_CHECK,,}" != "true" ]]; then
+        return 0
+    fi
+
+    if ! command -v checkrebuild >/dev/null 2>&1; then
+        return 0
+    fi
+
+    log_step "Checking for foreign packages requiring rebuild (checkrebuild)..."
+    local cr_raw
+    cr_raw=$(env LC_ALL=C checkrebuild 2>/dev/null || true)
+    [[ -z "$cr_raw" ]] && return 0
+
+    local raw_extracted foreign_installed pkgs_to_rebuild=""
+    raw_extracted=$(printf "%s\n" "$cr_raw" | awk '
+        $1 == "foreign" && $2 != "" {
+            pkg = $2
+            split(pkg, a, "[:(]")
+            pkg = a[1]
+            gsub(/[^a-zA-Z0-9@._+-]/, "", pkg)
+            if (pkg != "" && pkg !~ /^(warning|error|info|note)$/i) print pkg
+        }
+    ' | sort -u)
+
+    [[ -z "$raw_extracted" ]] && return 0
+
+    foreign_installed=$(pacman -Qqm 2>/dev/null || true)
+    if [[ -n "$foreign_installed" ]]; then
+        pkgs_to_rebuild=$(awk 'NR==FNR {if ($1 != "") a[$1]=1; next} ($1 != "" && a[$1]) {print $1}' <(printf "%s\n" "$foreign_installed") <(printf "%s\n" "$raw_extracted") | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')
+    fi
+
+    if [[ -n "$pkgs_to_rebuild" ]]; then
+        local count
+        count=$(echo "$pkgs_to_rebuild" | wc -w)
+        local rebuild_cmd=""
+        local can_auto_rebuild=true
+
+        if [[ "$HELPER_BIN" =~ ^(yay|paru|pikaur)$ ]]; then
+            rebuild_cmd="$AUR_HELPER -S --rebuild $pkgs_to_rebuild"
+        elif [[ "$HELPER_BIN" == "aura" ]]; then
+            rebuild_cmd="aura -A $pkgs_to_rebuild"
+        elif [[ "$HELPER_BIN" == "rua" ]]; then
+            rebuild_cmd="rua install $pkgs_to_rebuild"
+        elif [[ -n "$AUR_HELPER" ]]; then
+            rebuild_cmd="$AUR_HELPER -S $pkgs_to_rebuild"
+        else
+            can_auto_rebuild=false
+            rebuild_cmd="makepkg -sric (for: $pkgs_to_rebuild)"
+        fi
+
+        echo -e "\n${yellow}${bold}Attention:${reset} ${white}${count}${yellow} AUR package(s) (${white}${pkgs_to_rebuild}${yellow}) depend on older libraries.${reset}"
+
+        if [[ "$can_auto_rebuild" == "true" ]]; then
+            echo -e "${dim}Command: ${white}${rebuild_cmd}${reset}"
+            if ! $DAEMON_MODE; then
+                echo -ne "${white}Rebuild outdated AUR package(s) now? [Y/n]: ${reset}"
+                local ans_rebuild=""
+                read -r ans_rebuild </dev/tty || ans_rebuild="n"
+                if [[ "$ans_rebuild" =~ ^[Yy]$ || -z "$ans_rebuild" ]]; then
+                    sudo -v 2>/dev/null || true
+                    echo -e "\n${blue}${bold}Rebuilding AUR package(s)...${reset}\n"
+                    execute_update_task "$rebuild_cmd"
+                    local rb_exit=$?
+                    if [[ $rb_exit -eq 0 ]]; then
+                        echo -e "\n${green}AUR packages rebuilt successfully.${reset}\n"
+                    else
+                        echo -e "\n${red}Failed to rebuild some AUR packages (exit code $rb_exit).${reset}\n"
+                    fi
+                else
+                    echo -e "${dim}AUR package rebuild skipped by user.${reset}\n"
+                fi
+            fi
+        else
+            echo -e "${dim}Manual rebuild needed: ${white}${rebuild_cmd}${reset}\n"
+        fi
+    fi
+}
+
 get_current_mirror() {
     local mirror
     mirror=$(awk '/^[ \t]*Server[ \t]*=/ {
@@ -2121,13 +2404,24 @@ refresh_mirrors() {
         fi
     fi
 
-    local CUSTOM_REFLECTOR="${CUSTOM_REFLECTOR_CMD:-}"
-    local DEFAULT_REFLECTOR="sudo reflector --country Germany,Netherlands,France,Norway --protocol https --age 12 --latest 50 --number 20 --sort rate --save /etc/pacman.d/mirrorlist --download-timeout 10"
-    local ACTUAL_CMD="${CUSTOM_REFLECTOR:-$DEFAULT_REFLECTOR}"
+    local CUSTOM_RM="${CUSTOM_RATE_MIRRORS_CMD:-}"
+    local CUSTOM_REFL="${CUSTOM_REFLECTOR_CMD:-}"
+    local DEFAULT_REFL="sudo reflector --country Germany,Netherlands,France,Norway --protocol https --age 12 --latest 50 --number 20 --sort rate --save /etc/pacman.d/mirrorlist --download-timeout 10"
+
+    local DISPLAY_CMD=""
+    if [[ -n "$CUSTOM_RM" ]]; then
+        DISPLAY_CMD="$CUSTOM_RM"
+    elif command -v rate-mirrors &>/dev/null; then
+        DISPLAY_CMD="rate-mirrors --concurrency=30 --disable-comments --protocol=https arch"
+    elif [[ -n "$CUSTOM_REFL" ]]; then
+        DISPLAY_CMD="$CUSTOM_REFL"
+    else
+        DISPLAY_CMD="$DEFAULT_REFL"
+    fi
 
     echo -e "\n${yellow}${bold}!  $reason${reset}"
     echo -e "${dim}Current mirror: ${white}$current_mirror${dim} (Last ranked: $mirror_age)${reset}"
-    echo -e "${dim}Command: ${white}$ACTUAL_CMD${reset}"
+    echo -e "${dim}Command: ${white}$DISPLAY_CMD${reset}"
     echo -e "${dim}Can be changed in the settings.conf file.${reset}"
     echo -ne "${white}Refresh mirrors now? [Y/n]: ${reset}"
     if read -r ans; then
@@ -2151,58 +2445,105 @@ refresh_mirrors() {
                 fi
             fi
 
-            if command -v reflector &>/dev/null; then
-                echo -e "\n${blue}Running reflector for Arch Linux...${reset}"
+            local REFL_SUCCESS=false
 
-                local REFL_SUCCESS=false
+            run_refl_and_check() {
+                local cmd="$1"
 
-                run_refl_and_check() {
-                    local cmd="$1"
+                bash -o pipefail -c "$cmd" 2>&1 | tee "$REFL_LOG"
+                local exit_code=${PIPESTATUS[0]}
 
-                    bash -c "$cmd" 2>&1 | tee "$REFL_LOG"
-                    local exit_code=${PIPESTATUS[0]}
+                local err_count
+                err_count=$(grep -cEi "warning: failed to rate|timed out|error" "$REFL_LOG" 2>/dev/null || true)
 
-                    local err_count
-                    err_count=$(grep -cEi "warning: failed to rate|timed out|error" "$REFL_LOG" 2>/dev/null || true)
+                if [[ $exit_code -ne 0 ]] && (( err_count >= 15 )); then
+                    echo -e "\n${yellow}Mirror ranker encountered problems: $err_count mirrors are unavailable or timed out.${reset}"
+                    echo -e "${yellow}The connection might be unstable, or the mirrors are currently down.${reset}"
 
-                    if [[ $exit_code -ne 0 ]] && (( err_count >= 15 )); then
-                        echo -e "\n${yellow}Reflector has encountered problems: $err_count mirrors are unavailable or have timed out.${reset}"
-                        echo -e "${yellow}The connection might be unstable, or the mirrors are currently down.${reset}"
+                    local force_cont
+                    echo -ne "${white}Continue with the old mirrorlist anyway? [y/N]: ${reset}"
+                    read -r force_cont
 
-                        local force_cont
-                        echo -ne "${white}Continue with the old mirrorlist anyway? [y/N]: ${reset}"
-                        read -r force_cont
-
-                        if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
-                            echo -e "${red}The update was interrupted by the user.${reset}"
-                            exit 1
-                        fi
-
-                        return 255
+                    if [[ ! "$force_cont" =~ ^[Yy]$ ]]; then
+                        echo -e "${red}The update was interrupted by the user.${reset}"
+                        exit 1
                     fi
 
-                    return "$exit_code"
-                }
-
-                if [[ -n "$CUSTOM_REFLECTOR" ]]; then
-                    echo -e "${dim}Executing custom reflector command...${reset}"
-                    run_refl_and_check "$CUSTOM_REFLECTOR"
-                    refl_res=$?
-                    if [[ $refl_res -eq 0 ]]; then
-                        new_mirror=$(get_current_mirror)
-                        echo -e "${green}Custom Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
-                        REFL_SUCCESS=true
-                    elif [[ $refl_res -eq 255 ]]; then
-                        echo -e "${yellow}Proceeding with old mirrors...${reset}\n"
-                        return 0
-                    else
-                        echo -e "${yellow}Custom reflector command failed. Falling back to default...${reset}"
-                    fi
+                    return 255
                 fi
 
+                return "$exit_code"
+            }
+
+            if [[ -n "$CUSTOM_RM" ]]; then
+                echo -e "\n${blue}Running custom rate-mirrors command...${reset}"
+                local pre_mtime
+                pre_mtime=$(stat -c %Y /etc/pacman.d/mirrorlist 2>/dev/null || echo 0)
+                run_refl_and_check "$CUSTOM_RM"
+                refl_res=$?
+                local post_mtime
+                post_mtime=$(stat -c %Y /etc/pacman.d/mirrorlist 2>/dev/null || echo 0)
+                local srv_valid=0
+                srv_valid=$(grep -c "^[[:space:]]*Server[[:space:]]*=" /etc/pacman.d/mirrorlist 2>/dev/null || echo 0)
+                if [[ $refl_res -eq 0 && -s /etc/pacman.d/mirrorlist ]] && (( post_mtime >= pre_mtime && srv_valid >= 1 )); then
+                    new_mirror=$(get_current_mirror)
+                    echo -e "${green}Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
+                    REFL_SUCCESS=true
+                elif [[ $refl_res -eq 255 ]]; then
+                    echo -e "${yellow}Proceeding with old mirrors...${reset}\n"
+                    return 0
+                else
+                    echo -e "${yellow}Custom rate-mirrors command failed or mirrorlist was not modified. Falling back to reflector...${reset}"
+                fi
+            elif command -v rate-mirrors &>/dev/null; then
+                echo -e "\n${blue}Ranking mirrors using rate-mirrors (Fast)...${reset}"
+                local rm_tmp rm_err
+                create_temp_file rm_tmp "asu_ratemirrors"
+                create_temp_file rm_err "asu_rm_err"
+
+                if env LC_ALL=C rate-mirrors --concurrency=30 --disable-comments --protocol=https arch 1> "$rm_tmp" 2> "$rm_err"; then
+                    cat "$rm_err" > "$REFL_LOG" 2>/dev/null || true
+                    local srv_count
+                    srv_count=$(grep -c "^[[:space:]]*Server[[:space:]]*=" "$rm_tmp" 2>/dev/null || true)
+                    if (( srv_count >= 3 )); then
+                        if sudo cp "$rm_tmp" /etc/pacman.d/mirrorlist && sudo chmod 644 /etc/pacman.d/mirrorlist; then
+                            new_mirror=$(get_current_mirror)
+                            echo -e "\n${green}Arch mirrors updated via rate-mirrors ($srv_count mirrors). New mirror: ${white}$new_mirror${reset}\n"
+                            REFL_SUCCESS=true
+                        fi
+                    fi
+                else
+                    cat "$rm_err" > "$REFL_LOG" 2>/dev/null || true
+                    cat "$rm_err" >&2 2>/dev/null || true
+                fi
+
+                rm -f "$rm_tmp" "$rm_err" 2>/dev/null || true
                 if ! $REFL_SUCCESS; then
+                    echo -e "${yellow}rate-mirrors failed or returned insufficient mirrors. Falling back to reflector...${reset}"
+                fi
+            fi
+
+            if ! $REFL_SUCCESS; then
+                if command -v reflector &>/dev/null; then
+                    if [[ -n "$CUSTOM_REFL" ]]; then
+                        echo -e "\n${blue}Running custom reflector command...${reset}"
+                        run_refl_and_check "$CUSTOM_REFL"
+                        refl_res=$?
+                        if [[ $refl_res -eq 0 ]]; then
+                            new_mirror=$(get_current_mirror)
+                            echo -e "${green}Custom Arch mirrors updated successfully. New mirror: ${white}$new_mirror${reset}\n"
+                            return 0
+                        elif [[ $refl_res -eq 255 ]]; then
+                            echo -e "${yellow}Proceeding with old mirrors...${reset}\n"
+                            return 0
+                        else
+                            echo -e "${yellow}Custom reflector command failed. Falling back to default...${reset}"
+                        fi
+                    fi
+
+                    echo -e "\n${blue}Running reflector for Arch Linux (Fallback)...${reset}"
                     echo -e "${dim}Ranking mirrors... WARNINGS are expected.${reset}"
-                    run_refl_and_check "$DEFAULT_REFLECTOR"
+                    run_refl_and_check "$DEFAULT_REFL"
                     refl_res=$?
                     if [[ $refl_res -eq 0 ]]; then
                         new_mirror=$(get_current_mirror)
@@ -2215,12 +2556,12 @@ refresh_mirrors() {
                         echo -e "${red}Reflector failed (Try changing the settings.conf settings).${reset}\n"
                         return 1
                     fi
+                else
+                    echo -e "${red}Error: Primary mirror ranking failed and 'reflector' is not installed for fallback.${reset}\n"
+                    return 1
                 fi
-                return 0
-            else
-                echo -e "${red}Error: 'reflector' is not installed.${reset}\n"
-                return 1
             fi
+            return 0
         fi
     fi
     return 1
@@ -3186,6 +3527,11 @@ fi
 if [[ "$DAEMON_MODE" == true ]]; then
     CACHE_FILE="$CONFIG_DIR/updates.cache"
 
+    if ! check_disk_space >/dev/null 2>&1; then
+        log_step "Error: Insufficient disk space detected in background mode. Notification suppressed."
+        exit 0
+    fi
+
     if [[ "$GLOBAL_ADVISOR_SAFE" == true ]] && (( pkg_count > 0 )) && command -v notify-send >/dev/null 2>&1; then
         lock_file="$CONFIG_DIR/.state.lock"
         OLD_COUNT=0
@@ -3299,6 +3645,9 @@ fi
 if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     sudo -v
     echo -e "\n"
+    if ! check_disk_space; then
+        exit 1
+    fi
     backup_pacman_db
     UPDATE_SUCCESS=false
     RUN_STANDARD=true
@@ -3360,11 +3709,23 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
     fi
 
     if $RUN_STANDARD; then
+        PGP_SIG_ERROR_REGEX='(\[GNUPG:\]|\b(BADSIG|ERRSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY|KEYEXPIRED|SIGEXPIRED|KEYREVOKED|NODATA|TRUST_UNDEFINED)\b|\bGPGME(\s+error|_ERR_)|\([^)]*\b(PGP|GPG)\b[^)]*\)|\b(trustdb\.gpg|pubring\.(gpg|kbx)|pacman-key)\b)'
+
         if [[ "${IS_OFFLINE_MODE:-false}" == "true" ]]; then
             echo -e "${yellow}Offline mode active: Skipping keyring database sync and external update wrappers.${reset}\n"
             echo -e "${blue}${bold}Running offline system update (sudo pacman -Su)...${reset}"
             execute_update_task "sudo pacman -Su"
             core_exit=$?
+
+            if [[ $core_exit -ne 0 && $core_exit -ne 130 && $core_exit -ne 143 && $core_exit -ne 2 ]]; then
+                if printf '%s\n' "$LAST_TASK_OUTPUT" | grep -iqE "$PGP_SIG_ERROR_REGEX"; then
+                    if fix_pacman_keyrings; then
+                        echo -e "${blue}${bold}Retrying offline update after keyring hotfix...${reset}\n"
+                        execute_update_task "sudo pacman -Su"
+                        core_exit=$?
+                    fi
+                fi
+            fi
 
             if [[ $core_exit -eq 0 && -z "$(check_pending_updates "repo_only")" ]]; then
                 UPDATE_SUCCESS=true
@@ -3401,6 +3762,16 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
                 echo -e "${blue}${bold}Running $tool_name (Keyrings & Packages)...${reset}"
                 execute_update_task "$tool_name"
                 core_exit=$?
+
+                if [[ $core_exit -ne 0 && $core_exit -ne 130 && $core_exit -ne 143 && $core_exit -ne 2 ]]; then
+                    if printf '%s\n' "$LAST_TASK_OUTPUT" | grep -iqE "$PGP_SIG_ERROR_REGEX"; then
+                        if fix_pacman_keyrings; then
+                            echo -e "${blue}${bold}Retrying $tool_name after keyring hotfix...${reset}\n"
+                            execute_update_task "$tool_name"
+                            core_exit=$?
+                        fi
+                    fi
+                fi
 
                 pending_updates=$(check_pending_updates "repo_only")
 
@@ -3446,6 +3817,16 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
                 echo -e "${blue}${bold}Running $tool_name...${reset}\n"
                 execute_update_task "$tool_name"
                 core_exit=$?
+
+                if [[ $core_exit -ne 0 && $core_exit -ne 130 && $core_exit -ne 143 && $core_exit -ne 2 ]]; then
+                    if printf '%s\n' "$LAST_TASK_OUTPUT" | grep -iqE "$PGP_SIG_ERROR_REGEX"; then
+                        if fix_pacman_keyrings; then
+                            echo -e "${blue}${bold}Retrying $tool_name after keyring hotfix...${reset}\n"
+                            execute_update_task "$tool_name"
+                            core_exit=$?
+                        fi
+                    fi
+                fi
 
                 pending_updates=$(check_pending_updates)
                 pending_repo=$(check_pending_updates "repo_only")
@@ -3496,6 +3877,17 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
                 echo -e "${blue}${bold}Running Topgrade (System, AUR, Firmware, etc.)...${reset}\n"
                 execute_update_task "topgrade"
                 topgrade_exit=$?
+
+                if [[ $topgrade_exit -ne 0 && $topgrade_exit -ne 130 && $topgrade_exit -ne 143 && $topgrade_exit -ne 2 ]]; then
+                    if printf '%s\n' "$LAST_TASK_OUTPUT" | grep -iqE "$PGP_SIG_ERROR_REGEX"; then
+                        if fix_pacman_keyrings; then
+                            echo -e "${blue}${bold}Retrying Topgrade after keyring hotfix...${reset}\n"
+                            execute_update_task "topgrade"
+                            topgrade_exit=$?
+                        fi
+                    fi
+                fi
+
                 pending_repo=$(check_pending_updates "repo_only")
                 pending_all=$(check_pending_updates "all")
                 if [[ $topgrade_exit -eq 0 && -z "$pending_all" ]]; then
@@ -3515,20 +3907,30 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
 
             else
                 echo -e "${blue}${bold}Running standard system update...${reset}"
+                std_update_cmd=""
                 if [[ -n "$AUR_HELPER" ]]; then
                     if [[ "$HELPER_BIN" == "rua" ]]; then
-                        execute_update_task "sudo pacman -Syu && rua upgrade"
-                        core_exit=$?
+                        std_update_cmd="sudo pacman -Syu && rua upgrade"
                     elif [[ "$HELPER_BIN" == "aura" ]]; then
-                        execute_update_task "sudo pacman -Syu && aura -Aua"
-                        core_exit=$?
+                        std_update_cmd="sudo pacman -Syu && aura -Aua"
                     else
-                        execute_update_task "$AUR_HELPER -Syu"
-                        core_exit=$?
+                        std_update_cmd="$AUR_HELPER -Syu"
                     fi
                 else
-                    execute_update_task "sudo pacman -Syu"
-                    core_exit=$?
+                    std_update_cmd="sudo pacman -Syu"
+                fi
+
+                execute_update_task "$std_update_cmd"
+                core_exit=$?
+
+                if [[ $core_exit -ne 0 && $core_exit -ne 130 && $core_exit -ne 143 && $core_exit -ne 2 ]]; then
+                    if printf '%s\n' "$LAST_TASK_OUTPUT" | grep -iqE "$PGP_SIG_ERROR_REGEX"; then
+                        if fix_pacman_keyrings; then
+                            echo -e "${blue}${bold}Retrying system update after keyring hotfix...${reset}\n"
+                            execute_update_task "$std_update_cmd"
+                            core_exit=$?
+                        fi
+                    fi
                 fi
 
                 if [[ $core_exit -eq 0 && -z "$(check_pending_updates)" ]]; then
@@ -3536,7 +3938,7 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
                 elif [[ $core_exit -eq 0 && -z "$AUR_HELPER" && -z "$(check_pending_updates "repo_only")" ]]; then
                     UPDATE_SUCCESS=true
                     echo -e "\n${yellow}Official repository packages updated successfully.${reset}"
-                    echo -e "${yellow}Note: AUR packages were skipped because no AUR helper (e.g. yay/paru) is installed.${reset}"
+                    echo -e "${yellow}Note: AUR packages were skipped because no AUR helper is installed.${reset}"
                 fi
             fi
         fi
@@ -3626,6 +4028,7 @@ if [[ "$answer" =~ ^[Yy]$ || -z "$answer" ]]; then
         else
             echo ""
         fi
+        check_aur_rebuild_needed
         check_reboot_needed
     else
         echo -e "\n${red}Update process completed with errors, partial updates, or was cancelled.${reset}\n"
