@@ -62,7 +62,7 @@ create_temp_file() {
     local tmp
     tmp=$(mktemp "/tmp/${prefix}.XXXXXX") || exit 1
     ASU_TEMP_FILES+=("$tmp")
-    eval "$var_name=\$tmp"
+    printf -v "$var_name" "%s" "$tmp"
 }
 
 create_temp_dir() {
@@ -71,7 +71,7 @@ create_temp_dir() {
     local tmp
     tmp=$(mktemp -d "/tmp/${prefix}.XXXXXX") || exit 1
     ASU_TEMP_DIRS+=("$tmp")
-    eval "$var_name=\$tmp"
+    printf -v "$var_name" "%s" "$tmp"
 }
 
 test_socket_alive() {
@@ -400,7 +400,7 @@ if ! $DAEMON_MODE && [ -d "$CONFIG_DIR" ]; then
     if [[ "$dir_owner" == "0" ]] || find "$CONFIG_DIR" -user root -print -quit 2>/dev/null | grep -q .; then
         echo -e "${yellow}Detected files owned by root in config directory.${reset}"
         echo -ne "${white}Fix ownership of config directory using sudo chown? [y/N]: ${reset}"
-        read -r chown_ans </dev/tty || chown_ans="n"
+        read -r chown_ans </dev/tty 2>/dev/null || read -r chown_ans 2>/dev/null || chown_ans="n"
         if [[ "$chown_ans" =~ ^[Yy]$ ]]; then
             if ! sudo chown -R "$(id -u):$(id -g)" "$CONFIG_DIR"; then
                 echo -e "${red}Error: Failed to fix ownership of config directory. Exiting.${reset}"
@@ -473,7 +473,7 @@ prompt_user() {
     local user_input=""
     if ! $DAEMON_MODE; then
         echo -ne "${white}${msg} [${options}]: ${reset}"
-        read -r user_input </dev/tty || user_input=""
+        read -r user_input </dev/tty 2>/dev/null || read -r user_input 2>/dev/null || user_input=""
     fi
     [[ -n "$user_input" ]] && declare -g "$var_name=$user_input"
 }
@@ -1019,7 +1019,7 @@ validate_user_conf() {
                         [[ -n "$cmd" ]] && printf "  %b• %b%s%b\n" "${cyan}" "${white}" "$cmd" "${reset}"
                     done < <(parse_bash_array "$file" "CUSTOM_CMDS")
                     echo -ne "${white}Do you trust and want to execute these custom commands? [y/N]: ${reset}"
-                    read -r trust_ans </dev/tty || trust_ans="n"
+                    read -r trust_ans </dev/tty 2>/dev/null || read -r trust_ans 2>/dev/null || trust_ans="n"
                     if [[ "$trust_ans" =~ ^[Yy]$ ]]; then
                         sha256sum "$file" | cut -d' ' -f1 > "$trust_file"
                         chmod 600 "$trust_file" 2>/dev/null || true
@@ -1027,7 +1027,7 @@ validate_user_conf() {
                         echo -e "${red}Error: Custom commands untrusted. Refusing to load settings.conf.${reset}"
                         echo -ne "${white}Would you like to remove these custom commands? [Y/n]: ${reset}"
                         local remove_ans=""
-                        read -r remove_ans </dev/tty || remove_ans="n"
+                        read -r remove_ans </dev/tty 2>/dev/null || read -r remove_ans 2>/dev/null || remove_ans="n"
                         if [[ "$remove_ans" =~ ^[Yy]$ || -z "$remove_ans" ]]; then
                             local default_param=""
                             if [[ -n "${SETTINGS_DEFAULT:-}" && -f "$SETTINGS_DEFAULT" ]]; then
@@ -1859,6 +1859,7 @@ EOF
     ) && [[ "$news_ts" =~ ^[0-9]+$ ]]; then
         now_time=$(date +%s)
         diff_hours=$(( (now_time - news_ts) / 3600 ))
+        (( diff_hours < 0 )) && diff_hours=0
 
         if (( diff_hours < 336 )); then
             local NEWS_CACHE="$CONFIG_DIR/news.cache"
@@ -2190,7 +2191,7 @@ check_disk_space() {
 
         echo -ne "${white}Continue update despite low disk space? [y/N]: ${reset}"
         local ans_space=""
-        read -r ans_space </dev/tty || ans_space="n"
+        read -r ans_space </dev/tty 2>/dev/null || read -r ans_space 2>/dev/null || ans_space="n"
         if [[ ! "$ans_space" =~ ^[Yy]$ ]]; then
             echo -e "${red}Update aborted due to low disk space.${reset}"
             exit 1
@@ -2223,14 +2224,16 @@ check_disk_space() {
             fi
             if [[ "$boot_free_kb" =~ ^[0-9]+$ ]] && (( boot_free_kb < 65536 )); then
                 local boot_free_mb=$(( boot_free_kb / 1024 ))
+                if $DAEMON_MODE; then
+                    log_step "Error: ${boot_target} partition is low on space (${boot_free_mb} MB free)."
+                    return 1
+                fi
                 echo -e "\n${yellow}Warning: ${boot_target} partition is low on space (${white}${boot_free_mb} MB${yellow} free).${reset}"
-                if ! $DAEMON_MODE; then
-                    echo -ne "${white}Continue anyway? [y/N]: ${reset}"
-                    local ans_boot="n"
-                    read -r ans_boot </dev/tty || ans_boot="n"
-                    if [[ ! "$ans_boot" =~ ^[Yy]$ ]]; then
-                        exit 1
-                    fi
+                echo -ne "${white}Continue anyway? [y/N]: ${reset}"
+                local ans_boot="n"
+                read -r ans_boot </dev/tty 2>/dev/null || read -r ans_boot 2>/dev/null || ans_boot="n"
+                if [[ ! "$ans_boot" =~ ^[Yy]$ ]]; then
+                    exit 1
                 fi
             fi
         fi
@@ -2334,7 +2337,7 @@ check_aur_rebuild_needed() {
             if ! $DAEMON_MODE; then
                 echo -ne "${white}Rebuild outdated AUR package(s) now? [Y/n]: ${reset}"
                 local ans_rebuild=""
-                read -r ans_rebuild </dev/tty || ans_rebuild="n"
+                read -r ans_rebuild </dev/tty 2>/dev/null || read -r ans_rebuild 2>/dev/null || ans_rebuild="n"
                 if [[ "$ans_rebuild" =~ ^[Yy]$ || -z "$ans_rebuild" ]]; then
                     sudo -v 2>/dev/null || true
                     echo -e "\n${blue}${bold}Rebuilding AUR package(s)...${reset}\n"
@@ -2768,13 +2771,13 @@ while (( attempt <= MAX_RETRIES )); do
     log_step "Syncing temporary database (pacman -Sy)..."
 
     if $DAEMON_MODE; then
-        PACMAN_OPTS=""
+        declare -a PACMAN_OPTS=()
         if pacman --disable-sandbox --version >/dev/null 2>&1; then
-            PACMAN_OPTS="--disable-sandbox"
+            PACMAN_OPTS+=("--disable-sandbox")
         fi
 
         if command -v timeout >/dev/null 2>&1; then
-            timeout -k 10s -s INT 600 env LC_ALL=C fakeroot pacman $PACMAN_OPTS -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"
+            timeout -k 10s -s INT 600 env LC_ALL=C fakeroot pacman "${PACMAN_OPTS[@]}" -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"
             PACMAN_EXIT=${PIPESTATUS[0]}
 
             if [[ "$PACMAN_EXIT" == "124" || "$PACMAN_EXIT" == "137" ]]; then
@@ -2783,7 +2786,7 @@ while (( attempt <= MAX_RETRIES )); do
                 exit 1
             fi
         else
-            env LC_ALL=C fakeroot pacman $PACMAN_OPTS -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"
+            env LC_ALL=C fakeroot pacman "${PACMAN_OPTS[@]}" -Sy --dbpath "$CHECK_DB" --logfile /dev/null 2>&1 | tee "$SYNC_LOG"
             PACMAN_EXIT=${PIPESTATUS[0]}
         fi
     else
@@ -3168,8 +3171,8 @@ if [[ -s "$OUTPUT_FILE" ]]; then
         val = a[1]
         unit = tolower(a[2])
 
-        if (unit == "kib" || unit == "kb") val /= 1024
-        else if (unit == "gib" || unit == "gb") val *= 1024
+        if (unit == "kib" || unit == "kb" || unit == "k") val /= 1024
+        else if (unit == "gib" || unit == "gb" || unit == "g") val *= 1024
         else if (unit == "b" || unit == "bytes") val /= (1024 * 1024)
 
         sum += val
