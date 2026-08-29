@@ -2412,7 +2412,7 @@ refresh_mirrors() {
     if [[ -n "$CUSTOM_RM" ]]; then
         DISPLAY_CMD="$CUSTOM_RM"
     elif command -v rate-mirrors &>/dev/null; then
-        DISPLAY_CMD="rate-mirrors --concurrency=30 --disable-comments-in-file --protocol=https arch"
+        DISPLAY_CMD="rate-mirrors --concurrency=30 --disable-comments-in-file --protocol=https arch | sudo tee /etc/pacman.d/mirrorlist"
     elif [[ -n "$CUSTOM_REFL" ]]; then
         DISPLAY_CMD="$CUSTOM_REFL"
     else
