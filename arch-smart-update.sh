@@ -248,7 +248,7 @@ handle_notify_worker() {
     local notif_icon="${2:-software-update-available}"
     local pkg_count="${3:-0}"
     local aur_count="${4:-0}"
-    local notif_timeout=60000
+    local notif_timeout=30000
     local target_script
     target_script="$(realpath "$(command -v "${BASH_SOURCE:-$0}" 2>/dev/null || echo "${BASH_SOURCE:-$0}")")"
 
@@ -1360,7 +1360,7 @@ IGNORE_PATCH_TIMERS=true
 # shellcheck disable=SC2034
 SILENCE_UPDATES=6h
 # shellcheck disable=SC2034
-NOTIFICATION_TIMEOUT=60000
+NOTIFICATION_TIMEOUT=30000
 PROMPT_MIRROR_REFRESH=false
 AUR_HELPER_OVERRIDE=""
 CUSTOM_RATE_MIRRORS_CMD=""
